@@ -14,21 +14,14 @@ Examples:
 
 ```bash
 nagrik-ai crawl sites                     # crawl all sites at depth 1
-nagrik-ai crawl sites --depth 2           # crawl deeper
-nagrik-ai crawl sites --depth 0           # unlimited depth
-nagrik-ai crawl sites --manage            # skip URLs already crawled
-nagrik-ai crawl sites -d 2 -m             # depth 2 + management mode
+nagrik-ai parse all                       # parse all sites under content/
+
 ```
 
-### `nagrik-ai parse all`
-
-```bash
-nagrik-ai parse all [OPTIONS]
-```
-
-| Option          | Short | Type   | Default   | Description       |
-| --------------- | ----- | ------ | --------- | ----------------- |
-| `--content-dir` | `-d`  | `PATH` | `content` | Content directory |
+| Option          | Short | Type   | Default   | Description                         |
+| --------------- | ----- | ------ | --------- | ----------------------------------- |
+| `--content-dir` | `-d`  | `PATH` | `content` | Content directory                   |
+| `--config`      | `-c`  | `PATH` | —         | Path to site config YAML (optional) |
 
 ### `nagrik-ai vectorize run`
 

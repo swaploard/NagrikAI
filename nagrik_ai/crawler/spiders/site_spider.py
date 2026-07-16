@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlparse
 
 from scrapy.http import Response
 from scrapy.linkextractors import LinkExtractor
@@ -8,6 +9,14 @@ from scrapy.spiders import CrawlSpider, Rule
 
 from nagrik_ai.config.config_models import SiteConfig
 from nagrik_ai.models.document import Document
+
+
+def url_to_filename(url: str) -> str:
+    parsed = urlparse(url)
+    path = parsed.path.strip("/")
+    if not path:
+        return "index"
+    return path
 
 
 class SiteSpider(CrawlSpider):
@@ -38,35 +47,28 @@ class SiteSpider(CrawlSpider):
 
         super().__init__(*args, **kwargs)
 
-    def parse_start_url(self, response: Response) -> dict[str, object]:
+    def parse_start_url(self, response: Response, **_kwargs: object) -> dict[str, object]:
         return self.parse_item(response)
 
     def parse_item(self, response: Response) -> dict[str, object]:
         url = response.url
+        filename = url_to_filename(url)
+        filepath = (self.output_dir / filename).with_suffix(".html")
 
-        if self.manage:
-            existing = (self.output_dir / url.replace("/", "_").replace(":", "_")).with_suffix(".md")
-            if existing.exists():
-                return {"url": url, "title": "", "doc_id": "", "skipped": True}
+        if self.manage and filepath.exists():
+            return {"url": url, "title": "", "doc_id": "", "skipped": True}
 
         title = response.css("title::text").get(default="").strip()
 
-        body = response.css("body")
-        for sel in self.site_config.parser.strip_selectors:
-            for element in body.css(sel):
-                element.drop()
-        content = " ".join(text.strip() for text in body.xpath(".//text()").getall() if text.strip())
-        content = "\n\n".join(line.strip() for line in content.split("  ") if line.strip())
-
-        doc = Document(
-            content=content,
+        docs = Document(
+            content=response.text,
             source="crawl",
             site=self.site_config.name,
             title=title,
             url=url,
         )
 
-        path = self.output_dir / f"{doc.doc_id}.md"
-        path.write_text(doc.content, encoding="utf-8")
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        filepath.write_text(docs.content, encoding="utf-8")
 
-        return {"url": url, "title": title, "doc_id": doc.doc_id, "skipped": False}
+        return {"url": url, "title": title, "doc_id": docs.doc_id, "filename": f"{filename}.html", "skipped": False}

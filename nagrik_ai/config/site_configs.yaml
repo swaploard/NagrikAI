@@ -19,7 +19,7 @@ sites:
         - style
 
   - name: gst
-    base_url: https://www.gst.gov.in
+    base_url: https://www.gst.gov.in/
     start_urls:
       - https://www.gst.gov.in/
     allowed_domains:

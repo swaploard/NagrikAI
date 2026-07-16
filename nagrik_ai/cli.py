@@ -8,7 +8,7 @@ import typer
 from nagrik_ai.config.settings import CHROMA_PERSIST_DIR, CONTENT_DIR
 from nagrik_ai.crawler.scrapy_runner import run_batch_scrapy_crawl
 from nagrik_ai.factories import create_chroma_store, create_config_manager, create_orchestrator
-from nagrik_ai.parser.parser import HTMLParser
+from nagrik_ai.parser.parser import Parser
 from nagrik_ai.vectorstore.vectorizer import Vectorizer
 
 app = typer.Typer(name="nagrik-ai")
@@ -40,22 +40,41 @@ def sites(
 @parse_app.command()
 def all(
     content_dir: Annotated[Path, typer.Option("--content-dir", "-d", help="Content directory")] = CONTENT_DIR,
+    config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Path to site config YAML")] = None,
 ) -> None:
-    parser = HTMLParser()
-    for site_dir in content_dir.iterdir():
+    from nagrik_ai.config.config_models import ParserConfig, SiteConfig
+
+    from pydantic import HttpUrl
+
+    config_manager = create_config_manager(config_path)
+    config = config_manager.load()
+    site_configs = {site.name: site for site in config.sites}
+    default_site = SiteConfig(
+        name="default",
+        base_url=HttpUrl("https://example.com"),
+        start_urls=[],
+        allowed_domains=[],
+        parser=ParserConfig(),
+    )
+
+    for site_dir in sorted(content_dir.iterdir()):
         if not site_dir.is_dir():
             continue
         crawled = site_dir / "crawled"
         parsed = site_dir / "parsed"
         if not crawled.exists():
             continue
-        typer.echo(f"Parsing {site_dir.name}...")
-        count = 0
-        for md_file in sorted(crawled.glob("*.md")):
-            doc = parser.parse_file(md_file, site=site_dir.name)
-            parser.save_parsed(doc, parsed)
-            count += 1
-        typer.echo(f"  Parsed {count} files")
+        site_name = site_dir.name
+        site = site_configs.get(site_name, default_site)
+        typer.echo(f"Parsing {site_name}...")
+        parser = Parser(
+            site_name=site_name,
+            site_config=site,
+            input_dir=str(crawled),
+            output_dir=str(parsed),
+        )
+        results = parser.parse_all()
+        typer.echo(f"  Parsed {len(results)} files")
 
 
 @vectorize_app.command()

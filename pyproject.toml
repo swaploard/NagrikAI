@@ -84,6 +84,7 @@ ignore_missing_imports = true
 
 [dependency-groups]
 dev = [
+    "lxml-stubs>=0.5.1",
     "types-pyyaml>=6.0.12.20260518",
 ]
 
