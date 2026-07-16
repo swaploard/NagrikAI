@@ -22,9 +22,13 @@ def create_config_manager(config_path: Path | None = None) -> ConfigManager:
 
 
 def create_chroma_store(persist_dir: str | Path | None = None) -> ChromaStore:
+    from langchain_huggingface import HuggingFaceEmbeddings
+
+    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     return ChromaStore(
-        persist_dir=persist_dir or CHROMA_PERSIST_DIR,
-        model_name=EMBEDDING_MODEL,
+        collection_name="nagrik_ai_docs",
+        embeddings=embeddings,
+        persist_directory=str(persist_dir or CHROMA_PERSIST_DIR),
     )
 
 

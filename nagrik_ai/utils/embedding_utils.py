@@ -1,22 +1,41 @@
-from __future__ import annotations
+"""Utilities for generating embeddings using LangChain."""
 
-from functools import lru_cache
+import logging
+from typing import cast
 
-from sentence_transformers import SentenceTransformer
+from langchain_community.embeddings import (
+    SentenceTransformerEmbeddings,
+)
 
+from nagrik_ai.config.settings import EMBEDDING_MODEL
 
-@lru_cache(maxsize=1)
-def load_embedding_model(model_name: str = "all-MiniLM-L6-v2") -> SentenceTransformer:
-    return SentenceTransformer(model_name)
-
-
-def embed_text(text: str, model_name: str = "all-MiniLM-L6-v2") -> list[float]:
-    model = load_embedding_model(model_name)
-    result = model.encode(text)
-    return result.tolist()
+logger = logging.getLogger(__name__)
 
 
-def embed_batch(texts: list[str], model_name: str = "all-MiniLM-L6-v2") -> list[list[float]]:
-    model = load_embedding_model(model_name)
-    result = model.encode(texts)
-    return result.tolist()  # type: ignore[no-any-return]
+class EmbeddingGenerator:
+    """Generate embeddings using LangChain's SentenceTransformerEmbeddings."""
+
+    def __init__(self, model_name: str = EMBEDDING_MODEL) -> None:
+        self.model_name = model_name
+        self.embedding_model = SentenceTransformerEmbeddings(
+            model_name=model_name,
+            encode_kwargs={"normalize_embeddings": True},
+        )
+        logger.info("Initialized embedding model: %s", model_name)
+
+    def generate(self, text: str) -> list[float] | None:
+        try:
+            embedding = self.embedding_model.embed_query(text)
+        except Exception:
+            logger.exception("Error generating embedding")
+            return None
+        else:
+            return embedding
+
+    def generate_batch(self, texts: list[str]) -> list[list[float] | None]:
+        try:
+            embeddings = self.embedding_model.embed_documents(texts)
+            return cast("list[list[float] | None]", embeddings)
+        except Exception:
+            logger.exception("Error generating batch embeddings")
+            return [None for _ in texts]

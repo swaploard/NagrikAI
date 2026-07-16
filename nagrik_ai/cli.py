@@ -9,7 +9,8 @@ from nagrik_ai.config.settings import CHROMA_PERSIST_DIR, CONTENT_DIR
 from nagrik_ai.crawler.scrapy_runner import run_batch_scrapy_crawl
 from nagrik_ai.factories import create_chroma_store, create_config_manager, create_orchestrator
 from nagrik_ai.parser.parser import Parser
-from nagrik_ai.vectorstore.vectorizer import Vectorizer
+from nagrik_ai.utils.text_utils import HybridMarkdownSplitter
+from nagrik_ai.vectorstore.vectorizer import MarkdownVectorizer
 
 app = typer.Typer(name="nagrik-ai")
 crawl_app = typer.Typer(name="crawl")
@@ -77,8 +78,9 @@ def all(
         typer.echo(f"  Parsed {len(results)} files")
 
 
-@vectorize_app.command()
-def run(
+@vectorize_app.callback(invoke_without_command=True)
+def vectorize(
+    ctx: typer.Context,
     content_dir: Annotated[Path, typer.Option("--content-dir", "-d", help="Content directory")] = CONTENT_DIR,
     persist_dir: Annotated[
         Path, typer.Option("--persist-dir", "-p", help="ChromaDB persist directory")
@@ -86,8 +88,11 @@ def run(
     chunk_size: Annotated[int, typer.Option("--chunk-size", "-s", help="Chunk size")] = 512,
     chunk_overlap: Annotated[int, typer.Option("--chunk-overlap", "-o", help="Chunk overlap")] = 64,
 ) -> None:
+    if ctx.invoked_subcommand is not None:
+        return
     chroma_store = create_chroma_store(persist_dir)
-    vectorizer = Vectorizer(chroma_store, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    text_splitter = HybridMarkdownSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    vectorizer = MarkdownVectorizer(chroma_store, text_splitter=text_splitter)
     for site_dir in sorted(content_dir.iterdir()):
         if not site_dir.is_dir():
             continue
@@ -95,8 +100,8 @@ def run(
         if not parsed.exists():
             continue
         typer.echo(f"Vectorizing {site_dir.name}...")
-        count = vectorizer.vectorize_directory(parsed, site=site_dir.name)
-        typer.echo(f"  Added {count} chunks")
+        count = vectorizer.process_directory(str(parsed))
+        typer.echo(f"  Added {count} files")
 
 
 @app.command()
