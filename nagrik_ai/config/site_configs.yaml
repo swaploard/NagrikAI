@@ -1,55 +1,15 @@
 sites:
-  - name: migri
-    base_url: https://migri.fi
+  - name: india_gov
+    base_url: https://www.india.gov.in
     start_urls:
-      - https://migri.fi/en/residence-permits
-      - https://migri.fi/en/citizenship
+      - https://www.india.gov.in/
     allowed_domains:
-      - migri.fi
+      - india.gov.in
     crawler:
       max_concurrency: 5
       request_delay: 1.0
       timeout: 30
-      max_depth: 3
-    parser:
-      content_selector: "#content"
-      strip_selectors:
-        - nav
-        - footer
-        - script
-        - style
-
-  - name: kela
-    base_url: https://www.kela.fi
-    start_urls:
-      - https://www.kela.fi/foreigners
-      - https://www.kela.fi/benefits
-    allowed_domains:
-      - kela.fi
-    crawler:
-      max_concurrency: 5
-      request_delay: 1.0
-      timeout: 30
-      max_depth: 3
-    parser:
-      content_selector: ".main-content"
-      strip_selectors:
-        - nav
-        - footer
-        - script
-        - style
-
-  - name: vero
-    base_url: https://www.vero.fi
-    start_urls:
-      - https://www.vero.fi/en/individuals/tax-cards-and-tax-returns/
-    allowed_domains:
-      - vero.fi
-    crawler:
-      max_concurrency: 5
-      request_delay: 1.0
-      timeout: 30
-      max_depth: 3
+      max_depth: 1
     parser:
       content_selector: "main"
       strip_selectors:
@@ -58,36 +18,17 @@ sites:
         - script
         - style
 
-  - name: dvv
-    base_url: https://dvv.fi
+  - name: gst
+    base_url: https://www.gst.gov.in
     start_urls:
-      - https://dvv.fi/en/front-page
+      - https://www.gst.gov.in/
     allowed_domains:
-      - dvv.fi
+      - gst.gov.in
     crawler:
       max_concurrency: 5
       request_delay: 1.0
       timeout: 30
-      max_depth: 3
-    parser:
-      content_selector: "main"
-      strip_selectors:
-        - nav
-        - footer
-        - script
-        - style
-
-  - name: te_palvelut
-    base_url: https://te-palvelut.fi
-    start_urls:
-      - https://te-palvelut.fi/en/employment-opportunities
-    allowed_domains:
-      - te-palvelut.fi
-    crawler:
-      max_concurrency: 5
-      request_delay: 1.0
-      timeout: 30
-      max_depth: 3
+      max_depth: 1
     parser:
       content_selector: "main"
       strip_selectors:

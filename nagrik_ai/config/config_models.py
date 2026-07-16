@@ -7,7 +7,7 @@ class CrawlerConfig(BaseModel):
     max_concurrency: int = 5
     request_delay: float = 1.0
     timeout: int = 30
-    max_depth: int = 0  # 0 means unlimited
+    max_depth: int = 1
     user_agent: str = "NagrikAI/0.1 (+https://github.com/nagrik-ai/nagrik-ai)"
 
 

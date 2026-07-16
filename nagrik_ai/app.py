@@ -12,17 +12,17 @@ def _build_ui(orch: RAGOrchestrator) -> gr.Blocks:
     def respond(message: str, _history: list[dict[str, object]]) -> str:
         return orch.query(message)
 
-    with gr.Blocks(title="NagrikAI — Finnish Immigration Assistant") as demo:
+    with gr.Blocks(title="NagrikAI — Indian Immigration Assistant") as demo:
         gr.Markdown("# NagrikAI")
         gr.Markdown(
-            "AI-powered Finnish immigration assistant. "
+            "AI-powered Indian immigration assistant. "
             "Ask me about residence permits, social security, taxation, and more."
         )
 
         gr.ChatInterface(
             fn=respond,
             title="NagrikAI",
-            description="Ask a question about Finnish immigration.",
+            description="Ask a question about Indian immigration.",
         )
 
     return demo  # type: ignore[no-any-return]

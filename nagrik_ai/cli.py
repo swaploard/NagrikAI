@@ -6,7 +6,7 @@ from typing import Annotated
 import typer
 
 from nagrik_ai.config.settings import CHROMA_PERSIST_DIR, CONTENT_DIR
-from nagrik_ai.crawler.runner import run_crawl
+from nagrik_ai.crawler.scrapy_runner import run_batch_scrapy_crawl
 from nagrik_ai.factories import create_chroma_store, create_config_manager, create_orchestrator
 from nagrik_ai.parser.parser import HTMLParser
 from nagrik_ai.vectorstore.vectorizer import Vectorizer
@@ -24,15 +24,17 @@ app.add_typer(vectorize_app, name="vectorize", help="Vectorize parsed documents 
 def sites(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Path to site config YAML")] = None,
     output_dir: Annotated[Path, typer.Option("--output", "-o", help="Output directory")] = CONTENT_DIR,
-    depth: Annotated[int | None, typer.Option("--depth", "-d", help="Max crawl depth (0 = unlimited)")] = None,
+    depth: Annotated[int | None, typer.Option("--depth", "-d", help="Max crawl depth (0 = unlimited)")] = 1,
     manage: Annotated[bool, typer.Option("--manage", "-m", help="Skip already-crawled URLs")] = False,
 ) -> None:
     config_manager = create_config_manager(config_path)
     config = config_manager.load()
+    jobs = []
     for site in config.sites:
         typer.echo(f"Crawling {site.name}...")
-        count = run_crawl(site, output_dir, max_depth=depth, manage=manage)
-        typer.echo(f"  Saved {count} files")
+        crawled_dir = output_dir / site.name / "crawled"
+        jobs.append((site, crawled_dir, manage))
+    run_batch_scrapy_crawl(jobs, max_depth=depth)
 
 
 @parse_app.command()

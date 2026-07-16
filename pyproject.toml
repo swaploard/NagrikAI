@@ -1,7 +1,7 @@
 [project]
 name = "nagrik-ai"
 version = "0.1.0"
-description = "AI-powered Finnish immigration assistant using RAG over official sources"
+description = "AI-powered Inian goverment services assistant using RAG over official sources"
 readme = "README.md"
 requires-python = ">=3.14"
 license = { text = "MIT" }

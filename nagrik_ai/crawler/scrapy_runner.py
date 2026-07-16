@@ -17,17 +17,29 @@ def run_scrapy_crawl(
     max_depth: int | None = None,
     manage: bool = False,
 ) -> int:
-    output_dir.mkdir(parents=True, exist_ok=True)
+    return run_batch_scrapy_crawl(
+        [(site_config, output_dir, manage)],
+        max_depth=max_depth,
+    )
 
-    depth = max_depth if max_depth is not None else site_config.crawler.max_depth
+
+def run_batch_scrapy_crawl(
+    jobs: list[tuple[SiteConfig, Path, bool]],
+    max_depth: int | None = None,
+) -> int:
+    if not jobs:
+        return 0
+
+    first = jobs[0][0]
+    depth = max_depth if max_depth is not None else first.crawler.max_depth
 
     settings = {
         "BOT_NAME": "nagrik_ai",
-        "USER_AGENT": site_config.crawler.user_agent,
+        "USER_AGENT": first.crawler.user_agent,
         "ROBOTSTXT_OBEY": False,
-        "CONCURRENT_REQUESTS": site_config.crawler.max_concurrency,
-        "DOWNLOAD_DELAY": site_config.crawler.request_delay,
-        "DOWNLOAD_TIMEOUT": site_config.crawler.timeout,
+        "CONCURRENT_REQUESTS": first.crawler.max_concurrency,
+        "DOWNLOAD_DELAY": first.crawler.request_delay,
+        "DOWNLOAD_TIMEOUT": first.crawler.timeout,
         "DEPTH_LIMIT": depth if depth > 0 else 0,
         "LOG_LEVEL": "INFO",
         "LOG_FORMATTER": "scrapy.logformatter.LogFormatter",
@@ -41,12 +53,14 @@ def run_scrapy_crawl(
 
     process = CrawlerProcess(settings)
 
-    process.crawl(
-        SiteSpider,
-        site_config=site_config,
-        output_dir=output_dir,
-        manage=manage,
-    )
-    process.start()
+    for site_config, output_dir, manage in jobs:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        process.crawl(
+            SiteSpider,
+            site_config=site_config,
+            output_dir=output_dir,
+            manage=manage,
+        )
 
+    process.start()
     return 0
