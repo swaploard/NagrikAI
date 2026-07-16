@@ -1,0 +1,4 @@
+[pyrefly]
+include = ["nagrik_ai"]
+exclude = ["tests", "content", "chroma_db"]
+python_version = "3.14"

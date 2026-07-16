@@ -1,0 +1,89 @@
+[project]
+name = "nagrik-ai"
+version = "0.1.0"
+description = "AI-powered Finnish immigration assistant using RAG over official sources"
+readme = "README.md"
+requires-python = ">=3.14"
+license = { text = "MIT" }
+authors = [{ name = "NagrikAI Contributors" }]
+
+dependencies = [
+    "typer>=0.15,<1",
+    "gradio>=6,<7",
+    "httpx>=0.28,<1",
+    "beautifulsoup4>=4.13,<5",
+    "html2text>=2024,<2025",
+    "pydantic>=2,<3",
+    "pyyaml>=6,<7",
+    "langchain>=0.3,<1",
+    "langchain-chroma>=0.2,<1",
+    "langchain-community>=0.3,<1",
+    "chromadb>=1.5,<2",
+    "sentence-transformers>=3,<4",
+    "ollama>=0.4,<1",
+    "Scrapy>=2.12,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "pytest-asyncio>=0.25,<1",
+    "pytest-cov>=6,<7",
+    "ruff>=0.11,<1",
+    "mypy>=1.15,<2",
+    "pyrefly>=0.1,<1",
+    "prek>=0.2,<1",
+]
+
+[project.scripts]
+nagrik-ai = "nagrik_ai.cli:app"
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+target-version = "py314"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes
+    "I",       # isort
+    "N",       # pep8-naming
+    "UP",      # pyupgrade
+    "S",       # bandit security
+    "B",       # flake8-bugbear
+    "SIM",     # flake8-simplify
+    "ARG",     # flake8-unused-arguments
+    "RUF",     # ruff-specific
+]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "ARG001"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-v --cov=nagrik_ai --cov-report=term-missing"
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+warn_unreachable = true
+disallow_any_unimported = true
+disallow_subclassing_any = true
+
+[[tool.mypy.overrides]]
+module = ["chromadb.*", "gradio.*", "sentence_transformers.*", "ollama.*"]
+ignore_missing_imports = true
+
+[dependency-groups]
+dev = [
+    "types-pyyaml>=6.0.12.20260518",
+]
+
