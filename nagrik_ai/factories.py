@@ -10,7 +10,6 @@ from nagrik_ai.config.settings import (
     OLLAMA_MODEL,
     TOP_K,
 )
-from nagrik_ai.prompts.prompt_loader import PromptLoader
 from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
 from nagrik_ai.services.llm_service import LLMService
 from nagrik_ai.services.rag_orchestrator import RAGOrchestrator
@@ -43,17 +42,11 @@ def create_retrieval_service(chroma_store: ChromaStore | None = None) -> Documen
     )
 
 
-def create_prompt_loader(prompt_dir: Path | None = None) -> PromptLoader:
-    return PromptLoader(prompt_dir)
-
-
 def create_orchestrator(
     retrieval_service: DocumentRetrievalService | None = None,
     llm_service: LLMService | None = None,
-    prompt_loader: PromptLoader | None = None,
 ) -> RAGOrchestrator:
     return RAGOrchestrator(
         retrieval_service=retrieval_service or create_retrieval_service(),
         llm_service=llm_service or create_llm_service(),
-        prompt_loader=prompt_loader or create_prompt_loader(),
     )

@@ -1,6 +1,6 @@
-Context:
+CONTEXT:
 $context
 
-Question: $query
+QUESTION: $question
 
-Answer the question based on the context above. Cite your sources.
+ANSWER:
