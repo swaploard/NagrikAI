@@ -12,7 +12,7 @@ from langchain_text_splitters import (
     RecursiveCharacterTextSplitter,
 )
 
-from nagrik_ai.config.settings import CHUNK_OVERLAP, CHUNK_SIZE
+from nagrik_ai.config.config_models import CHUNK_OVERLAP, CHUNK_SIZE
 
 logger = logging.getLogger(__name__)
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import BaseModel, HttpUrl
 
 
@@ -42,6 +44,23 @@ class NagrikAIConfig(BaseModel):
     sites: list[SiteConfig]
     chroma_persist_dir: str = "chroma_db"
     content_dir: str = "content"
-    embedding_model: str = "all-MiniLM-L6-v2"
+    embedding_model: str = "BAAI/bge-m3"
     ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "llama3.2"
+    ollama_model: str = "qwen2.5:7b"
+    chunk_size: int = 512
+    chunk_overlap: int = 64
+    top_k: int = 5
+
+
+_defaults = NagrikAIConfig.model_construct(sites=[])
+
+CHROMA_PERSIST_DIR = Path(str(_defaults.chroma_persist_dir))
+CONTENT_DIR = Path(str(_defaults.content_dir))
+EMBEDDING_MODEL = _defaults.embedding_model
+OLLAMA_BASE_URL = _defaults.ollama_base_url
+OLLAMA_MODEL = _defaults.ollama_model
+CHUNK_SIZE = _defaults.chunk_size
+CHUNK_OVERLAP = _defaults.chunk_overlap
+TOP_K = _defaults.top_k
+
+del _defaults

@@ -7,7 +7,7 @@ from langchain_community.embeddings import (
     SentenceTransformerEmbeddings,
 )
 
-from nagrik_ai.config.settings import EMBEDDING_MODEL
+from nagrik_ai.config.config_models import EMBEDDING_MODEL
 
 logger = logging.getLogger(__name__)
 

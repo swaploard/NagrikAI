@@ -17,7 +17,7 @@ logging.getLogger("chromadb").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-from nagrik_ai.config.settings import CHROMA_PERSIST_DIR, CONTENT_DIR
+from nagrik_ai.config.config_models import CHROMA_PERSIST_DIR, CONTENT_DIR
 from nagrik_ai.factories import create_chroma_store, create_config_manager, create_orchestrator
 from nagrik_ai.parser.parser import Parser
 from nagrik_ai.utils.text_utils import HybridMarkdownSplitter

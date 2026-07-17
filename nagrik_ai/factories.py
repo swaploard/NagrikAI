@@ -8,7 +8,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 logger = logging.getLogger(__name__)
 
 from nagrik_ai.config.config_manager import ConfigManager
-from nagrik_ai.config.settings import (
+from nagrik_ai.config.config_models import (
     CHROMA_PERSIST_DIR,
     EMBEDDING_MODEL,
     OLLAMA_BASE_URL,
