@@ -52,6 +52,8 @@ class NagrikAIConfig(BaseModel):
     top_k: int = 5
     fetch_k: int = 20
     lambda_mult: float = 0.7
+    reranker_model: str = "BAAI/bge-reranker-large"
+    reranker_enabled: bool = True
 
 
 _defaults = NagrikAIConfig.model_construct(sites=[])
@@ -66,5 +68,7 @@ CHUNK_OVERLAP = _defaults.chunk_overlap
 TOP_K = _defaults.top_k
 FETCH_K = _defaults.fetch_k
 LAMBDA_MULT = _defaults.lambda_mult
+RERANKER_MODEL = _defaults.reranker_model
+RERANKER_ENABLED = _defaults.reranker_enabled
 
 del _defaults

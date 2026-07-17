@@ -15,11 +15,14 @@ from nagrik_ai.config.config_models import (
     LAMBDA_MULT,
     OLLAMA_BASE_URL,
     OLLAMA_MODEL,
+    RERANKER_ENABLED,
+    RERANKER_MODEL,
     TOP_K,
 )
 from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
 from nagrik_ai.services.llm_service import LLMService
 from nagrik_ai.services.rag_orchestrator import RAGOrchestrator
+from nagrik_ai.services.reranker import Reranker
 from nagrik_ai.vectorstore.chroma_store import ChromaStore
 
 
@@ -40,12 +43,20 @@ def create_llm_service() -> LLMService:
     return LLMService(base_url=OLLAMA_BASE_URL, model=OLLAMA_MODEL)
 
 
+def create_reranker() -> Reranker | None:
+    if not RERANKER_ENABLED:
+        logger.info("Reranker is disabled")
+        return None
+    return Reranker(model_name=RERANKER_MODEL)
+
+
 def create_retrieval_service(chroma_store: ChromaStore | None = None) -> DocumentRetrievalService:
     return DocumentRetrievalService(
         chroma_store=chroma_store or create_chroma_store(),
         top_k=TOP_K,
         fetch_k=FETCH_K,
         lambda_mult=LAMBDA_MULT,
+        reranker=create_reranker(),
     )
 
 
@@ -73,6 +84,8 @@ class RAGOrchestratorFactory:
         top_k: int = TOP_K,
         fetch_k: int = FETCH_K,
         lambda_mult: float = LAMBDA_MULT,
+        reranker_model: str = RERANKER_MODEL,
+        reranker_enabled: bool = RERANKER_ENABLED,
     ) -> None:
         self.collection_name = collection_name
         self.persist_directory = persist_directory or str(CHROMA_PERSIST_DIR)
@@ -82,6 +95,8 @@ class RAGOrchestratorFactory:
         self.top_k = top_k
         self.fetch_k = fetch_k
         self.lambda_mult = lambda_mult
+        self.reranker_model = reranker_model
+        self.reranker_enabled = reranker_enabled
 
     def create_embeddings(self) -> HuggingFaceEmbeddings:
         return HuggingFaceEmbeddings(
@@ -98,6 +113,12 @@ class RAGOrchestratorFactory:
             persist_directory=self.persist_directory,
         )
 
+    def create_reranker(self) -> Reranker | None:
+        if not self.reranker_enabled:
+            logger.info("Reranker is disabled")
+            return None
+        return Reranker(model_name=self.reranker_model)
+
     def create_document_retrieval_service(self, chroma_store: ChromaStore | None = None) -> DocumentRetrievalService:
         if chroma_store is None:
             chroma_store = self.create_chroma_store()
@@ -106,6 +127,7 @@ class RAGOrchestratorFactory:
             top_k=self.top_k,
             fetch_k=self.fetch_k,
             lambda_mult=self.lambda_mult,
+            reranker=self.create_reranker(),
         )
 
     def create_llm_service(self) -> LLMService:

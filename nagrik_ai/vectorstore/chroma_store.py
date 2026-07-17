@@ -98,6 +98,34 @@ class ChromaStore:
             logger.exception("Failed to add document %s", document_id)
             raise
 
+    def similarity_search(
+        self,
+        query_text: str,
+        k: int = 20,
+    ) -> list[Document]:
+        """Query the vector store by text using plain similarity search.
+
+        Args:
+            query_text: Text to search for
+            k: Number of nearest neighbors to return
+
+        Returns:
+            List of documents most similar to the query
+        """
+        try:
+            results = self.vector_db.similarity_search(
+                query=query_text,
+                k=k,
+            )
+
+            for doc in results:
+                self._enhance_document_with_citation(doc)
+        except Exception:
+            logger.exception("Failed to similarity search vector store")
+            return []
+        else:
+            return results
+
     def query(
         self,
         query_text: str,
