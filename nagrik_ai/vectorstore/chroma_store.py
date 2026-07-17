@@ -98,18 +98,31 @@ class ChromaStore:
             logger.exception("Failed to add document %s", document_id)
             raise
 
-    def query(self, query_text: str, n_results: int = 5) -> list[Document]:
-        """Query the vector store by text.
+    def query(
+        self,
+        query_text: str,
+        n_results: int = 5,
+        fetch_k: int = 20,
+        lambda_mult: float = 0.7,
+    ) -> list[Document]:
+        """Query the vector store by text using MMR for diversity.
 
         Args:
             query_text: Text to search for
             n_results: Number of results to return
+            fetch_k: Number of candidates to fetch before MMR re-ranking
+            lambda_mult: MMR diversity parameter (0 = max diversity, 1 = max relevance)
 
         Returns:
-            List of documents most similar to the query
+            List of documents most relevant and diverse for the query
         """
         try:
-            results = self.vector_db.similarity_search(query=query_text, k=n_results)
+            results = self.vector_db.max_marginal_relevance_search(
+                query=query_text,
+                k=n_results,
+                fetch_k=fetch_k,
+                lambda_mult=lambda_mult,
+            )
 
             # Enhance results with citation information
             for doc in results:

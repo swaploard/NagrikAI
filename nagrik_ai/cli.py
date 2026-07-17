@@ -37,21 +37,30 @@ def sites(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Path to site config YAML")] = None,
     output_dir: Annotated[Path, typer.Option("--output", "-o", help="Output directory")] = CONTENT_DIR,
     depth: Annotated[int | None, typer.Option("--depth", "-d", help="Max crawl depth (0 = unlimited)")] = 1,
+    site_names: Annotated[list[str] | None, typer.Option("--site", "-s", help="Site name(s) to crawl (can be repeated, e.g. -s gst -s gst_tutorial)")] = None,
     manage: Annotated[bool, typer.Option("--manage", "-m", help="Skip already-crawled URLs")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Enable verbose output")] = False,
 ) -> None:
     if verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    from nagrik_ai.crawler.scrapy_runner import run_batch_scrapy_crawl
-
     from nagrik_ai.config.config_models import SiteConfig
+    from nagrik_ai.crawler.scrapy_runner import run_batch_scrapy_crawl
 
     config_manager = create_config_manager(config_path)
     config = config_manager.load()
+    sites_to_crawl = [s for s in config.sites if site_names is None or s.name in site_names]
+    if not sites_to_crawl:
+        typer.echo("No matching sites found.", err=True)
+        raise typer.Exit(1)
+    if site_names:
+        missing = set(site_names) - {s.name for s in sites_to_crawl}
+        if missing:
+            typer.echo(f"Unknown site(s): {', '.join(sorted(missing))}", err=True)
+            raise typer.Exit(1)
     # Each job is a tuple: (site_config, output_directory, manage_flag)
     jobs: list[tuple[SiteConfig, Path, bool]] = []
-    for site in config.sites:
+    for site in sites_to_crawl:
         typer.echo(f"Crawling {site.name}...")
         crawled_dir = output_dir / site.name / "crawled"
         jobs.append((site, crawled_dir, manage))
@@ -66,9 +75,9 @@ def all(
 ) -> None:
     if verbose:
         logging.getLogger().setLevel(logging.DEBUG)
-    from nagrik_ai.config.config_models import ParserConfig, SiteConfig
-
     from pydantic import HttpUrl
+
+    from nagrik_ai.config.config_models import ParserConfig, SiteConfig
 
     config_manager = create_config_manager(config_path)
     config = config_manager.load()

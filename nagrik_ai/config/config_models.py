@@ -47,9 +47,11 @@ class NagrikAIConfig(BaseModel):
     embedding_model: str = "BAAI/bge-m3"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:7b"
-    chunk_size: int = 512
-    chunk_overlap: int = 64
+    chunk_size: int = 800
+    chunk_overlap: int = 200
     top_k: int = 5
+    fetch_k: int = 20
+    lambda_mult: float = 0.7
 
 
 _defaults = NagrikAIConfig.model_construct(sites=[])
@@ -62,5 +64,7 @@ OLLAMA_MODEL = _defaults.ollama_model
 CHUNK_SIZE = _defaults.chunk_size
 CHUNK_OVERLAP = _defaults.chunk_overlap
 TOP_K = _defaults.top_k
+FETCH_K = _defaults.fetch_k
+LAMBDA_MULT = _defaults.lambda_mult
 
 del _defaults

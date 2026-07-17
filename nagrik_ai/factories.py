@@ -11,6 +11,8 @@ from nagrik_ai.config.config_manager import ConfigManager
 from nagrik_ai.config.config_models import (
     CHROMA_PERSIST_DIR,
     EMBEDDING_MODEL,
+    FETCH_K,
+    LAMBDA_MULT,
     OLLAMA_BASE_URL,
     OLLAMA_MODEL,
     TOP_K,
@@ -42,6 +44,8 @@ def create_retrieval_service(chroma_store: ChromaStore | None = None) -> Documen
     return DocumentRetrievalService(
         chroma_store=chroma_store or create_chroma_store(),
         top_k=TOP_K,
+        fetch_k=FETCH_K,
+        lambda_mult=LAMBDA_MULT,
     )
 
 
@@ -67,6 +71,8 @@ class RAGOrchestratorFactory:
         ollama_base_url: str = OLLAMA_BASE_URL,
         ollama_model: str = OLLAMA_MODEL,
         top_k: int = TOP_K,
+        fetch_k: int = FETCH_K,
+        lambda_mult: float = LAMBDA_MULT,
     ) -> None:
         self.collection_name = collection_name
         self.persist_directory = persist_directory or str(CHROMA_PERSIST_DIR)
@@ -74,6 +80,8 @@ class RAGOrchestratorFactory:
         self.ollama_base_url = ollama_base_url
         self.ollama_model = ollama_model
         self.top_k = top_k
+        self.fetch_k = fetch_k
+        self.lambda_mult = lambda_mult
 
     def create_embeddings(self) -> HuggingFaceEmbeddings:
         return HuggingFaceEmbeddings(
@@ -93,7 +101,12 @@ class RAGOrchestratorFactory:
     def create_document_retrieval_service(self, chroma_store: ChromaStore | None = None) -> DocumentRetrievalService:
         if chroma_store is None:
             chroma_store = self.create_chroma_store()
-        return DocumentRetrievalService(chroma_store=chroma_store, top_k=self.top_k)
+        return DocumentRetrievalService(
+            chroma_store=chroma_store,
+            top_k=self.top_k,
+            fetch_k=self.fetch_k,
+            lambda_mult=self.lambda_mult,
+        )
 
     def create_llm_service(self) -> LLMService:
         return LLMService(base_url=self.ollama_base_url, model=self.ollama_model)

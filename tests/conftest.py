@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from nagrik_ai.config.config_models import CrawlerConfig, ParserConfig, SiteConfig
-from nagrik_ai.models.document import Document
 from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
 from nagrik_ai.services.llm_service import LLMService
 
@@ -26,7 +24,7 @@ def sample_site_config() -> SiteConfig:
 @pytest.fixture
 def mock_chroma_store() -> MagicMock:
     store = MagicMock()
-    store.similarity_search.return_value = []
+    store.max_marginal_relevance_search.return_value = []
     return store
 
 

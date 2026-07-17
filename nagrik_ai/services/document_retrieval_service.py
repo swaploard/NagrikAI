@@ -9,10 +9,23 @@ logger = logging.getLogger(__name__)
 
 
 class DocumentRetrievalService:
-    def __init__(self, chroma_store: ChromaStore, top_k: int = 5) -> None:
+    def __init__(
+        self,
+        chroma_store: ChromaStore,
+        top_k: int = 5,
+        fetch_k: int = 20,
+        lambda_mult: float = 0.7,
+    ) -> None:
         self.chroma_store = chroma_store
         self.top_k = top_k
-        logger.info("Initialized document retrieval service with top_k=%d", top_k)
+        self.fetch_k = fetch_k
+        self.lambda_mult = lambda_mult
+        logger.info(
+            "Initialized document retrieval service with top_k=%d, fetch_k=%d, lambda_mult=%.2f",
+            top_k,
+            fetch_k,
+            lambda_mult,
+        )
 
     def _normalize_metadata(self, metadata: Any) -> dict[str, Any]:
         if isinstance(metadata, dict):
@@ -25,7 +38,12 @@ class DocumentRetrievalService:
         return {}
 
     def retrieve(self, query: str) -> list[dict[str, Any]]:
-        docs = self.chroma_store.query(query, n_results=self.top_k)
+        docs = self.chroma_store.query(
+            query,
+            n_results=self.top_k,
+            fetch_k=self.fetch_k,
+            lambda_mult=self.lambda_mult,
+        )
         result: list[dict[str, Any]] = []
         for doc in docs:
             metadata = self._normalize_metadata(getattr(doc, "metadata", None))
