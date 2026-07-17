@@ -6,7 +6,6 @@ from typing import Annotated
 import typer
 
 from nagrik_ai.config.settings import CHROMA_PERSIST_DIR, CONTENT_DIR
-from nagrik_ai.crawler.scrapy_runner import run_batch_scrapy_crawl
 from nagrik_ai.factories import create_chroma_store, create_config_manager, create_orchestrator
 from nagrik_ai.parser.parser import Parser
 from nagrik_ai.utils.text_utils import HybridMarkdownSplitter
@@ -28,9 +27,14 @@ def sites(
     depth: Annotated[int | None, typer.Option("--depth", "-d", help="Max crawl depth (0 = unlimited)")] = 1,
     manage: Annotated[bool, typer.Option("--manage", "-m", help="Skip already-crawled URLs")] = False,
 ) -> None:
+    from nagrik_ai.crawler.scrapy_runner import run_batch_scrapy_crawl
+
+    from nagrik_ai.config.config_models import SiteConfig
+
     config_manager = create_config_manager(config_path)
     config = config_manager.load()
-    jobs = []
+    # Each job is a tuple: (site_config, output_directory, manage_flag)
+    jobs: list[tuple[SiteConfig, Path, bool]] = []
     for site in config.sites:
         typer.echo(f"Crawling {site.name}...")
         crawled_dir = output_dir / site.name / "crawled"

@@ -114,9 +114,17 @@ class Parser:
             self.logger.debug("Error in filename matching", exc_info=True)
         return None
 
+    def _build_tree(self, html_content: str) -> Any:
+        parser = html.HTMLParser()
+        if html_content.startswith("<?xml"):
+            return html.fromstring(html_content.encode("utf-8"), parser=parser)  # type: ignore[reportUnknownMemberType]
+        return html.fromstring(html_content, parser=parser)  # type: ignore[reportUnknownMemberType]
+
     def _parse_html(self, html_content: str) -> tuple[str, str]:
+        title = "Untitled"
+        markdown_content = ""
         try:
-            tree = html.fromstring(html_content)
+            tree: Any = self._build_tree(html_content)
             parser_config = self.config.parser
 
             # Strip unwanted elements
@@ -128,8 +136,10 @@ class Parser:
 
             # Extract title
             title_result = tree.xpath(parser_config.title_selector)
-            title_element = title_result[0] if title_result else None  # type: ignore[index]
-            title = title_element.text_content().strip() if title_element is not None else "Untitled"  # type: ignore[union-attr]
+            title_element = title_result[0] if title_result else None
+            if title_element is not None:
+                title_text = title_element.text_content()
+                title = title_text.strip() if title_text else "Untitled"
 
             # Find content section
             content_elements = list(tree.cssselect(parser_config.content_selector))
@@ -180,7 +190,7 @@ class Parser:
         if not self.current_base_url:
             return html_content
         try:
-            tree = html.fromstring(html_content)
+            tree: Any = html.fromstring(html_content)  # type: ignore[reportUnknownMemberType]
             href_prefixes = ("http://", "https://", "//", "mailto:", "#", "tel:")
             src_prefixes = ("http://", "https://", "//", "data:")
             for element in tree.iter(tag="*"):
