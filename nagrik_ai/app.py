@@ -80,10 +80,10 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
 
         gr.Examples(  # type: ignore[call-arg]
             examples=[
-                "How do I apply for a residence permit?",
-                "What documents do I need for family reunification?",
-                "How long does it take to process a work permit?",
-                "What are the requirements for Indian citizenship?",
+                "Who all are eligible for the QRMP scheme?",
+                "What is IFF?",
+                "Whether it is required to exercise the option every quarter / year?",
+                "When can Form GSTR-1 be filed as Nil?",
             ],
             inputs=msg,
         )
