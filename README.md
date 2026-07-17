@@ -1,6 +1,6 @@
 # NagrikAI
 
-AI-powered Indian immigration assistant using a RAG pipeline over official sources.
+AI-powered Indian GST assistant using a RAG pipeline over official sources.
 
 ### Commands
 

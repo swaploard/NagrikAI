@@ -30,10 +30,12 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
             chat_history = []
 
         chat_history.append({"role": "user", "content": message})
+        chat_history.append({"role": "assistant", "content": "..."})
         yield "", chat_history
 
         try:
             stream: Iterator[str] = orch.query_stream(message)
+            chat_history.pop()
             assistant_response = ""
             for chunk in stream:
                 assistant_response += chunk
@@ -46,6 +48,7 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
 
         except Exception:
             logger.exception("Error generating response")
+            chat_history.pop()
             error_message = "I encountered an error while processing your query. Please try again."
             chat_history.append({"role": "assistant", "content": error_message})
             yield "", chat_history
