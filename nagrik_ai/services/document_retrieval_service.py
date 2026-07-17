@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, cast
 
 from nagrik_ai.vectorstore.chroma_store import ChromaStore
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentRetrievalService:
     def __init__(self, chroma_store: ChromaStore, top_k: int = 5) -> None:
         self.chroma_store = chroma_store
         self.top_k = top_k
+        logger.info("Initialized document retrieval service with top_k=%d", top_k)
 
     def _normalize_metadata(self, metadata: Any) -> dict[str, Any]:
         if isinstance(metadata, dict):

@@ -52,6 +52,8 @@ class Parser:
         input_dir: str,
         output_dir: str,
     ) -> None:
+        self.setup_logging()
+
         self.site = site_name
         self.config = site_config
         self.input_dir = input_dir
@@ -64,6 +66,14 @@ class Parser:
 
         Path(self.output_dir).mkdir(parents=True, exist_ok=True)
         self.logger.info("Initialized Parser for %s", self.site)
+
+    @staticmethod
+    def setup_logging() -> None:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(message)s",
+            handlers=[logging.StreamHandler()],
+        )
 
     def _load_url_mappings(self) -> None:
         mapping_file = Path(self.input_dir) / "url_mappings.json"

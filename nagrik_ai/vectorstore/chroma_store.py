@@ -48,7 +48,7 @@ class ChromaStore:
             persist_directory=persist_directory,
         )
 
-        logger.debug("Initialized ChromaStore with collection: %s", collection_name)
+        logger.info("Initialized ChromaStore with collection: %s", collection_name)
 
     def add_document(
         self,
@@ -65,15 +65,17 @@ class ChromaStore:
             metadata: Document metadata
         """
         try:
+            metadata_dict = metadata if metadata is not None else {}
+
             # Extract content from metadata if available
-            document_text = metadata.get("content", "") if metadata else ""
+            document_text = metadata_dict.get("content", "")
 
             # If content is missing from metadata but available elsewhere, try to find it
-            if not document_text and metadata is not None:
+            if not document_text:
                 # Look for content in other common field names
                 for field in ["text", "body", "page_content", "full_text"]:
-                    if metadata is not None and field in metadata:
-                        document_text = metadata[field]
+                    if field in metadata_dict:
+                        document_text = metadata_dict[field]
                         break
 
             # Ensure we have some text content
@@ -83,11 +85,12 @@ class ChromaStore:
 
             # Create document dictionary with IDs
             # Note: LangChain's Chroma will compute embeddings automatically if not provided
-            self.vector_db.add_texts(
+            add_texts_result = self.vector_db.add_texts(  # type: ignore[reportUnknownMemberType]
                 texts=[document_text],
-                metadatas=[metadata] if metadata is not None else None,
+                metadatas=[metadata_dict] if metadata is not None else None,
                 ids=[document_id],
             )
+            _ = add_texts_result
 
             logger.debug("Added document %s to vector store", document_id)
 

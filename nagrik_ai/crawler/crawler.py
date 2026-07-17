@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from datetime import datetime
 from urllib.parse import urljoin, urlparse
@@ -11,12 +12,24 @@ from bs4 import BeautifulSoup
 from nagrik_ai.config.config_models import SiteConfig
 from nagrik_ai.models.document import Document
 
+logger = logging.getLogger(__name__)
+
 
 class BaseCrawler:
     def __init__(self, site_config: SiteConfig) -> None:
+        self.setup_logging()
+
         self.site_config = site_config
         self.cfg = site_config.crawler
         self._visited: set[str] = set()
+
+    @staticmethod
+    def setup_logging() -> None:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(message)s",
+            handlers=[logging.StreamHandler()],
+        )
 
     async def crawl(self) -> AsyncIterator[Document]:
         async with httpx.AsyncClient(

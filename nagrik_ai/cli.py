@@ -1,9 +1,21 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Annotated
 
 import typer
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
+logging.getLogger("onnxruntime").setLevel(logging.ERROR)
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("chromadb").setLevel(logging.WARNING)
+
+logger = logging.getLogger(__name__)
 
 from nagrik_ai.config.settings import CHROMA_PERSIST_DIR, CONTENT_DIR
 from nagrik_ai.factories import create_chroma_store, create_config_manager, create_orchestrator
@@ -26,7 +38,11 @@ def sites(
     output_dir: Annotated[Path, typer.Option("--output", "-o", help="Output directory")] = CONTENT_DIR,
     depth: Annotated[int | None, typer.Option("--depth", "-d", help="Max crawl depth (0 = unlimited)")] = 1,
     manage: Annotated[bool, typer.Option("--manage", "-m", help="Skip already-crawled URLs")] = False,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Enable verbose output")] = False,
 ) -> None:
+    if verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
     from nagrik_ai.crawler.scrapy_runner import run_batch_scrapy_crawl
 
     from nagrik_ai.config.config_models import SiteConfig
@@ -46,7 +62,10 @@ def sites(
 def all(
     content_dir: Annotated[Path, typer.Option("--content-dir", "-d", help="Content directory")] = CONTENT_DIR,
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Path to site config YAML")] = None,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Enable verbose output")] = False,
 ) -> None:
+    if verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
     from nagrik_ai.config.config_models import ParserConfig, SiteConfig
 
     from pydantic import HttpUrl
@@ -91,7 +110,11 @@ def vectorize(
     ] = CHROMA_PERSIST_DIR,
     chunk_size: Annotated[int, typer.Option("--chunk-size", "-s", help="Chunk size")] = 512,
     chunk_overlap: Annotated[int, typer.Option("--chunk-overlap", "-o", help="Chunk overlap")] = 64,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Enable verbose output")] = False,
 ) -> None:
+    if verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
     if ctx.invoked_subcommand is not None:
         return
     chroma_store = create_chroma_store(persist_dir)
@@ -118,9 +141,11 @@ def app_command(
 ) -> None:
     from nagrik_ai.app import launch
 
+    typer.echo("🚀 Starting Gradio app")
+    typer.echo(f"📚 Using ChromaDB collection 'nagrik_ai_docs' from '{persist_dir}'")
+
     orch = create_orchestrator()
     launch(orch, share=share, server_port=port)
-    _ = persist_dir  # used by Typer option
 
 
 if __name__ == "__main__":

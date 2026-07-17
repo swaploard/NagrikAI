@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 
 from nagrik_ai.prompts.prompt_loader import load_prompt
 from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
 from nagrik_ai.services.llm_service import LLMService
+
+logger = logging.getLogger(__name__)
 
 
 class RAGOrchestrator:
@@ -15,6 +18,7 @@ class RAGOrchestrator:
     ) -> None:
         self.retrieval_service = retrieval_service
         self.llm_service = llm_service
+        logger.info("Initialized RAG orchestrator")
 
     def query(self, user_query: str) -> str:
         results = self.retrieval_service.retrieve(user_query)

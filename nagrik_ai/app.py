@@ -9,6 +9,8 @@ import gradio as gr
 from nagrik_ai.factories import create_orchestrator
 from nagrik_ai.services.rag_orchestrator import RAGOrchestrator
 
+logging.basicConfig(level=logging.INFO)
+
 logger = logging.getLogger(__name__)
 
 

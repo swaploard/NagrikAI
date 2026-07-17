@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from langchain_huggingface import HuggingFaceEmbeddings
+
+logger = logging.getLogger(__name__)
 
 from nagrik_ai.config.config_manager import ConfigManager
 from nagrik_ai.config.settings import (
@@ -46,6 +49,7 @@ def create_orchestrator(
     retrieval_service: DocumentRetrievalService | None = None,
     llm_service: LLMService | None = None,
 ) -> RAGOrchestrator:
+    logger.info("Initializing RAG orchestrator")
     return RAGOrchestrator(
         retrieval_service=retrieval_service or create_retrieval_service(),
         llm_service=llm_service or create_llm_service(),
