@@ -220,6 +220,29 @@ class ChromaStore:
         else:
             return result
 
+    def get_all_documents(self) -> list[Document]:
+        """Get all documents from the vector store.
+
+        Returns:
+            List of all Document objects in the store
+        """
+        try:
+            result = self.vector_db.get(include=["documents", "metadatas"])
+            documents: list[Document] = []
+            ids = result.get("ids", [])
+            texts = result.get("documents", [])
+            metadatas = result.get("metadatas", [])
+            for doc_id, text, metadata in zip(ids, texts, metadatas, strict=False):
+                md = metadata if metadata else {}
+                md["chroma_id"] = doc_id
+                doc = Document(page_content=text or "", metadata=md)
+                self._enhance_document_with_citation(doc)
+                documents.append(doc)
+            return documents
+        except Exception:
+            logger.exception("Failed to get all documents")
+            return []
+
     def add_documents(self, documents: list[Document]) -> list[str]:
         """Add documents to the vector store.
 

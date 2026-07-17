@@ -54,6 +54,10 @@ class NagrikAIConfig(BaseModel):
     lambda_mult: float = 0.7
     reranker_model: str = "BAAI/bge-reranker-large"
     reranker_enabled: bool = True
+    hybrid_search_enabled: bool = True
+    bm25_k1: float = 1.5
+    bm25_b: float = 0.75
+    rrf_k: int = 60
 
 
 _defaults = NagrikAIConfig.model_construct(sites=[])
@@ -70,5 +74,9 @@ FETCH_K = _defaults.fetch_k
 LAMBDA_MULT = _defaults.lambda_mult
 RERANKER_MODEL = _defaults.reranker_model
 RERANKER_ENABLED = _defaults.reranker_enabled
+HYBRID_SEARCH_ENABLED = _defaults.hybrid_search_enabled
+BM25_K1 = _defaults.bm25_k1
+BM25_B = _defaults.bm25_b
+RRF_K = _defaults.rrf_k
 
 del _defaults

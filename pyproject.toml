@@ -24,6 +24,7 @@ dependencies = [
     "Scrapy>=2.12,<3",
     "python-frontmatter>=1.3.0",
     "langchain-huggingface>=0.3.1",
+    "rank-bm25>=0.2,<1",
 ]
 
 [project.optional-dependencies]
@@ -79,6 +80,7 @@ strict = true
 warn_unreachable = true
 disallow_any_unimported = true
 disallow_subclassing_any = true
+mypy_path = ["typings"]
 
 [[tool.mypy.overrides]]
 module = ["chromadb.*", "gradio.*", "sentence_transformers.*", "ollama.*"]

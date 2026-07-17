@@ -9,20 +9,25 @@ logger = logging.getLogger(__name__)
 
 from nagrik_ai.config.config_manager import ConfigManager
 from nagrik_ai.config.config_models import (
+    BM25_B,
+    BM25_K1,
     CHROMA_PERSIST_DIR,
     EMBEDDING_MODEL,
     FETCH_K,
+    HYBRID_SEARCH_ENABLED,
     LAMBDA_MULT,
     OLLAMA_BASE_URL,
     OLLAMA_MODEL,
     RERANKER_ENABLED,
     RERANKER_MODEL,
+    RRF_K,
     TOP_K,
 )
 from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
 from nagrik_ai.services.llm_service import LLMService
 from nagrik_ai.services.rag_orchestrator import RAGOrchestrator
 from nagrik_ai.services.reranker import Reranker
+from nagrik_ai.vectorstore.bm25_retriever import BM25Retriever
 from nagrik_ai.vectorstore.chroma_store import ChromaStore
 
 
@@ -50,13 +55,24 @@ def create_reranker() -> Reranker | None:
     return Reranker(model_name=RERANKER_MODEL)
 
 
+def create_bm25_retriever(chroma_store: ChromaStore) -> BM25Retriever | None:
+    if not HYBRID_SEARCH_ENABLED:
+        return None
+    return BM25Retriever(chroma_store=chroma_store, k1=BM25_K1, b=BM25_B)
+
+
 def create_retrieval_service(chroma_store: ChromaStore | None = None) -> DocumentRetrievalService:
+    store = chroma_store or create_chroma_store()
+    bm25 = create_bm25_retriever(store)
     return DocumentRetrievalService(
-        chroma_store=chroma_store or create_chroma_store(),
+        chroma_store=store,
         top_k=TOP_K,
         fetch_k=FETCH_K,
         lambda_mult=LAMBDA_MULT,
         reranker=create_reranker(),
+        hybrid_search=HYBRID_SEARCH_ENABLED and bm25 is not None,
+        bm25_retriever=bm25,
+        rrf_k=RRF_K,
     )
 
 
@@ -86,6 +102,10 @@ class RAGOrchestratorFactory:
         lambda_mult: float = LAMBDA_MULT,
         reranker_model: str = RERANKER_MODEL,
         reranker_enabled: bool = RERANKER_ENABLED,
+        hybrid_search_enabled: bool = HYBRID_SEARCH_ENABLED,
+        bm25_k1: float = BM25_K1,
+        bm25_b: float = BM25_B,
+        rrf_k: int = RRF_K,
     ) -> None:
         self.collection_name = collection_name
         self.persist_directory = persist_directory or str(CHROMA_PERSIST_DIR)
@@ -97,6 +117,10 @@ class RAGOrchestratorFactory:
         self.lambda_mult = lambda_mult
         self.reranker_model = reranker_model
         self.reranker_enabled = reranker_enabled
+        self.hybrid_search_enabled = hybrid_search_enabled
+        self.bm25_k1 = bm25_k1
+        self.bm25_b = bm25_b
+        self.rrf_k = rrf_k
 
     def create_embeddings(self) -> HuggingFaceEmbeddings:
         return HuggingFaceEmbeddings(
@@ -119,15 +143,28 @@ class RAGOrchestratorFactory:
             return None
         return Reranker(model_name=self.reranker_model)
 
+    def create_bm25_retriever(self, chroma_store: ChromaStore) -> BM25Retriever | None:
+        if not self.hybrid_search_enabled:
+            return None
+        return BM25Retriever(
+            chroma_store=chroma_store,
+            k1=self.bm25_k1,
+            b=self.bm25_b,
+        )
+
     def create_document_retrieval_service(self, chroma_store: ChromaStore | None = None) -> DocumentRetrievalService:
         if chroma_store is None:
             chroma_store = self.create_chroma_store()
+        bm25 = self.create_bm25_retriever(chroma_store)
         return DocumentRetrievalService(
             chroma_store=chroma_store,
             top_k=self.top_k,
             fetch_k=self.fetch_k,
             lambda_mult=self.lambda_mult,
             reranker=self.create_reranker(),
+            hybrid_search=self.hybrid_search_enabled and bm25 is not None,
+            bm25_retriever=bm25,
+            rrf_k=self.rrf_k,
         )
 
     def create_llm_service(self) -> LLMService:
