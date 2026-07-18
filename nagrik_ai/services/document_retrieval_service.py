@@ -7,9 +7,17 @@ from langchain_core.documents import Document
 
 from nagrik_ai.services.reranker import Reranker
 from nagrik_ai.vectorstore.bm25_retriever import BM25Retriever
-from nagrik_ai.vectorstore.chroma_store import ChromaStore
+from nagrik_ai.vectorstore.chroma_store import ChromaStore, validate_metadata
 
 logger = logging.getLogger(__name__)
+
+
+def get_score(doc: dict[str, Any]) -> float:
+    """Safely extract score from various retriever output formats."""
+    score = doc.get("score", 0.0)
+    if isinstance(score, (int, float)):
+        return float(score)
+    return 0.0
 
 
 class DocumentRetrievalService:
@@ -42,20 +50,16 @@ class DocumentRetrievalService:
             hybrid_search,
         )
 
-    def _normalize_metadata(self, metadata: Any) -> dict[str, Any]:
-        if isinstance(metadata, dict):
+    def _normalize_metadata(self, metadata: dict[str, Any]) -> dict[str, Any]:
             normalized: dict[str, Any] = {}
-            mapping = cast(dict[Any, Any], metadata)
-            for key, value in mapping.items():
-                if isinstance(key, str):
+            for key, value in metadata.items():
                     normalized[key] = value
             return normalized
-        return {}
 
     def _docs_to_dicts(self, docs: list[Document]) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
         for doc in docs:
-            metadata = self._normalize_metadata(getattr(doc, "metadata", None))
+            metadata = validate_metadata(cast("dict[str, Any]", getattr(doc, "metadata", {})))
             content = getattr(doc, "page_content", "")
             result.append({"content": content, "metadata": metadata})
         return result
@@ -93,6 +97,7 @@ class DocumentRetrievalService:
 
             if self.reranker is not None:
                 return self.reranker.rerank(query, fused, top_k=self.top_k)
+            fused.sort(key=get_score, reverse=True)
             return fused[: self.top_k]
 
         if self.reranker is not None:
@@ -106,7 +111,9 @@ class DocumentRetrievalService:
             fetch_k=self.fetch_k,
             lambda_mult=self.lambda_mult,
         )
-        return self._docs_to_dicts(docs)
+        results = self._docs_to_dicts(docs)
+        results.sort(key=get_score, reverse=True)
+        return results
 
     def format_context(self, results: list[dict[str, Any]]) -> str:
         parts: list[str] = []

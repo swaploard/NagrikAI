@@ -9,6 +9,30 @@ from langchain_core.embeddings import Embeddings
 
 logger = logging.getLogger(__name__)
 
+STANDARD_METADATA_FIELDS: dict[str, type] = {
+    "title": str,
+    "url": str,
+    "domain": str,
+    "source_id": str,
+    "chunk_index": int,
+    "total_chunks": int,
+    "score": float,
+}
+
+
+def validate_metadata(meta: dict[Any, Any]) -> dict[str, Any]:
+    """Fill missing fields with safe defaults; prevent NoneType crashes."""
+    validated: dict[str, Any] = {}
+    for key, typ in STANDARD_METADATA_FIELDS.items():
+        value = meta.get(key)
+        if value is None:
+            value = 0.0 if typ is float else (0 if typ is int else "")
+        try:
+            validated[key] = typ(value) if not isinstance(value, typ) else value
+        except (ValueError, TypeError):
+            validated[key] = 0.0 if typ is float else (0 if typ is int else "")
+    return validated
+
 
 class ChromaStore:
     """LangChain-based ChromaDB vector store abstraction.
@@ -83,14 +107,16 @@ class ChromaStore:
                 logger.warning("No content found for document %s", document_id)
                 document_text = f"Empty document: {document_id}"
 
-            # Create document dictionary with IDs
-            # Note: LangChain's Chroma will compute embeddings automatically if not provided
-            add_texts_result = self.vector_db.add_texts(  # type: ignore[reportUnknownMemberType]
-                texts=[document_text],
-                metadatas=[metadata_dict] if metadata is not None else None,
-                ids=[document_id],
-            )
-            _ = add_texts_result
+            # Create a LangChain Document and add via add_documents to ensure proper typing
+            # Note: Chroma will compute embeddings automatically if not provided
+            validated_meta = validate_metadata(metadata_dict)
+            doc = Document(page_content=document_text, metadata=validated_meta)
+            added_ids = self.vector_db.add_documents([doc])
+            # If the underlying store returned ids, ensure the requested id is recorded in metadata
+            if added_ids and document_id:
+                # try to set chroma id in metadata for consistency
+                metadata_dict.setdefault("chroma_id", document_id)
+            _ = added_ids
 
             logger.debug("Added document %s to vector store", document_id)
 
@@ -113,13 +139,16 @@ class ChromaStore:
             List of documents most similar to the query
         """
         try:
-            results = self.vector_db.similarity_search(
+            results: list[Document]= self.vector_db.similarity_search(
                 query=query_text,
                 k=k,
             )
 
             for doc in results:
                 self._enhance_document_with_citation(doc)
+                raw_metadata: dict[str, Any] | None = getattr(doc, "metadata", None)
+                if isinstance(raw_metadata, dict):
+                    doc.metadata = validate_metadata(raw_metadata)
         except Exception:
             logger.exception("Failed to similarity search vector store")
             return []
@@ -145,7 +174,7 @@ class ChromaStore:
             List of documents most relevant and diverse for the query
         """
         try:
-            results = self.vector_db.max_marginal_relevance_search(
+            results: list[Document] = self.vector_db.max_marginal_relevance_search(
                 query=query_text,
                 k=n_results,
                 fetch_k=fetch_k,
@@ -155,6 +184,9 @@ class ChromaStore:
             # Enhance results with citation information
             for doc in results:
                 self._enhance_document_with_citation(doc)
+                raw_metadata: dict[str, Any] | None = getattr(doc, "metadata", None)
+                if isinstance(raw_metadata, dict):
+                    doc.metadata = validate_metadata(raw_metadata)
         except Exception:
             logger.exception("Failed to query vector store")
             return []
@@ -183,7 +215,9 @@ class ChromaStore:
 
             # Enhance results with citation information
             for doc, _score in results:
-                self._enhance_document_with_citation(doc)
+                raw_metadata: dict[str, Any] | None = getattr(doc, "metadata", None)
+                if isinstance(raw_metadata, dict):
+                    doc.metadata = validate_metadata(raw_metadata)
         except Exception:
             logger.exception("Failed to query vector store with embedding")
             return []
@@ -200,19 +234,19 @@ class ChromaStore:
             The document if found
         """
         try:
-            result = self.vector_db.get(
+            result: dict[str, Any] = self.vector_db.get(
                 ids=[document_id],
                 include=["documents", "metadatas"],
             )
 
             # Add citation information
             if result and "metadatas" in result and result["metadatas"]:
-                for metadata in result["metadatas"]:
+                for i, metadata in enumerate(result["metadatas"]):
                     if isinstance(metadata, dict):
-                        if "source_url" in metadata:
-                            metadata["citation_url"] = metadata["source_url"]
-                        elif "url" in metadata:
-                            metadata["citation_url"] = metadata["url"]
+                        metadata_typed = cast(dict[str, Any], metadata)
+                        validated_metadata = validate_metadata(metadata_typed)
+                        result["metadatas"][i] = validated_metadata
+
 
         except Exception:
             logger.exception("Failed to get document %s", document_id)
@@ -233,8 +267,9 @@ class ChromaStore:
             texts = result.get("documents", [])
             metadatas = result.get("metadatas", [])
             for doc_id, text, metadata in zip(ids, texts, metadatas, strict=False):
-                md = metadata if metadata else {}
+                md: dict[str, Any] = dict(metadata) if metadata else {}
                 md["chroma_id"] = doc_id
+                md = validate_metadata(md)
                 doc = Document(page_content=text or "", metadata=md)
                 self._enhance_document_with_citation(doc)
                 documents.append(doc)
@@ -253,6 +288,9 @@ class ChromaStore:
             List of document IDs
         """
         try:
+            for doc in documents:
+                raw_metadata: dict[str, Any] = getattr(doc, "metadata", {})
+                doc.metadata = validate_metadata(raw_metadata)
             return self.vector_db.add_documents(documents)
         except Exception:
             logger.exception("Failed to add documents")
@@ -267,9 +305,11 @@ class ChromaStore:
         if not hasattr(doc, "metadata"):
             return
 
-        md = cast("dict[str, Any]", doc.metadata)
+        md = dict(doc.metadata)
 
         if "source_url" in md:
             md["citation_url"] = md["source_url"]
         elif "url" in md:
             md["citation_url"] = md["url"]
+
+        doc.metadata = md

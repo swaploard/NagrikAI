@@ -2,12 +2,12 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 
 from langchain_core.documents import Document
 
 from nagrik_ai.utils.markdown_utils import find_markdown_files, read_markdown_file
-from nagrik_ai.vectorstore.chroma_store import ChromaStore
+from nagrik_ai.vectorstore.chroma_store import ChromaStore, validate_metadata
 
 
 class TextSplitter(Protocol):
@@ -83,7 +83,7 @@ class MarkdownVectorizer:
                     md = self._normalize_metadata(getattr(chunk, "metadata", None))
                     md["chunk_index"] = i
                     md["total_chunks"] = len(chunks)
-                    chunk.metadata = md
+                    chunk.metadata = validate_metadata(md)
 
                 all_documents.extend(chunks)
 
@@ -101,13 +101,10 @@ class MarkdownVectorizer:
         return len(all_documents)
 
     def _normalize_metadata(self, metadata: Any) -> dict[str, Any]:
-        if isinstance(metadata, dict):
             normalized: dict[str, Any] = {}
-            for key, value in cast(dict[Any, Any], metadata).items():
-                if isinstance(key, str):
-                    normalized[key] = value
+            for key, value in metadata.items():
+                normalized[key] = value
             return normalized
-        return {}
 
     def _prepare_metadata(
         self,
@@ -134,7 +131,7 @@ class MarkdownVectorizer:
         elif "url" in enriched_metadata:
             enriched_metadata["citation_url"] = enriched_metadata["url"]
 
-        return enriched_metadata
+        return validate_metadata(enriched_metadata)
 
     def process_file(self, file_path: str) -> int:
         try:
@@ -155,7 +152,7 @@ class MarkdownVectorizer:
                 md = self._normalize_metadata(getattr(chunk, "metadata", None))
                 md["chunk_index"] = i
                 md["total_chunks"] = len(chunks)
-                chunk.metadata = md
+                chunk.metadata = validate_metadata(md)
 
             self.chroma_store.add_documents(chunks)
 

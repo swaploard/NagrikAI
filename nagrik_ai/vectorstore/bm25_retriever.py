@@ -6,7 +6,7 @@ from typing import Any
 from langchain_core.documents import Document
 from rank_bm25 import BM25Okapi
 
-from nagrik_ai.vectorstore.chroma_store import ChromaStore
+from nagrik_ai.vectorstore.chroma_store import ChromaStore, validate_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -32,17 +32,19 @@ class BM25Retriever:
         self._documents = []
         for doc in docs:
             metadata: dict[str, Any] = {}
-            raw_metadata = getattr(doc, "metadata", None)
+            raw_metadata: dict[str, Any] | None = getattr(doc, "metadata", None)
             if isinstance(raw_metadata, dict):
-                metadata = {"source": "document"}
-            else:
-                metadata = {}
+                metadata = validate_metadata(raw_metadata)
             self._documents.append(
                 {
                     "content": doc.page_content,
                     "metadata": metadata,
                 }
             )
+        if not docs:
+            self._bm25 = None
+            logger.warning("No documents found in ChromaDB, BM25 index not built")
+            return
         tokenized_corpus = [self._tokenize(doc.page_content) for doc in docs]
         self._bm25 = BM25Okapi(tokenized_corpus, k1=self.k1, b=self.b)
         logger.info(
@@ -55,6 +57,9 @@ class BM25Retriever:
     def retrieve(self, query: str, k: int = 20) -> list[dict[str, Any]]:
         if self._bm25 is None:
             self._build_index()
+
+        if self._bm25 is None:
+            return []
 
         tokenized_query = self._tokenize(query)
         bm25: Any = self._bm25

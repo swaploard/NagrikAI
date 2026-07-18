@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import Any, cast
+from typing import Any
 
 from langchain_core.documents import Document
 from langchain_text_splitters import (
@@ -128,14 +128,11 @@ def remove_javascript(html_content: str) -> str:
     return re.sub(r"(\s)javascript:", r"\1", cleaned)
 
 
-def _normalize_metadata(metadata: Any) -> dict[str, Any]:
-    if isinstance(metadata, dict):
+def _normalize_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         normalized: dict[str, Any] = {}
-        for key, value in cast(dict[Any, Any], metadata).items():
-            if isinstance(key, str):
+        for key, value in metadata.items():
                 normalized[key] = value
         return normalized
-    return {}
 
 
 def _chunk_text_safely(
