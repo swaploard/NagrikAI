@@ -8,6 +8,145 @@ import pytest
 from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
 
 
+class TestFormatContext:
+    def test_format_context_structured_blocks(self) -> None:
+        chroma_mock = MagicMock()
+        service = DocumentRetrievalService(chroma_store=chroma_mock, top_k=3)
+
+        results: list[dict[str, Any]] = [
+            {
+                "content": "GST registration is required for businesses with turnover above 20 lakhs.",
+                "metadata": {
+                    "source_id": "gst_001",
+                    "title": "GST Registration Guide",
+                    "citation_url": "https://gst.gov.in/register",
+                    "domain": "gst.gov.in",
+                },
+            },
+            {
+                "content": "File GSTR-1 monthly by 11th of next month.",
+                "metadata": {
+                    "source_id": "gst_002",
+                    "title": "GSTR-1 Filing",
+                    "citation_url": "https://gst.gov.in/gstr1",
+                    "domain": "gst.gov.in",
+                },
+            },
+        ]
+
+        formatted, citation_mapping = service.format_context(results)
+
+        # Check formatted context contains expected citations
+        assert "[1] Source ID: gst_001" in formatted
+        assert "Title: GST Registration Guide" in formatted
+        assert "URL: https://gst.gov.in/register" in formatted
+        assert "Domain: gst.gov.in" in formatted
+        assert "Content: GST registration is required" in formatted
+
+        assert "[2] Source ID: gst_002" in formatted
+        assert "Title: GSTR-1 Filing" in formatted
+        assert "URL: https://gst.gov.in/gstr1" in formatted
+        assert "Content: File GSTR-1 monthly" in formatted
+
+        assert "\n\n---\n\n" in formatted
+        assert formatted.count("\n\n---\n\n") == 1
+
+        # Check citation_mapping has locked IDs
+        assert len(citation_mapping) == 2
+        assert citation_mapping[1]["metadata"]["source_id"] == "gst_001"
+        assert citation_mapping[2]["metadata"]["source_id"] == "gst_002"
+        # Verify citation_id is locked on docs
+        assert results[0].get("citation_id") == 1
+        assert results[1].get("citation_id") == 2
+
+    def test_format_context_single_result(self) -> None:
+        chroma_mock = MagicMock()
+        service = DocumentRetrievalService(chroma_store=chroma_mock, top_k=1)
+
+        results: list[dict[str, Any]] = [
+            {
+                "content": "Single result content.",
+                "metadata": {
+                    "source_id": "single_001",
+                    "title": "Single Doc",
+                    "citation_url": "https://example.com/doc",
+                    "domain": "example.com",
+                },
+            }
+        ]
+
+        formatted, citation_mapping = service.format_context(results)
+
+        assert formatted == (
+            "[1] Source ID: single_001 | Title: Single Doc | "
+            "URL: https://example.com/doc | Domain: example.com\n"
+            "Content: Single result content."
+        )
+        assert "---" not in formatted
+
+        assert len(citation_mapping) == 1
+        assert citation_mapping[1]["metadata"]["source_id"] == "single_001"
+        assert results[0].get("citation_id") == 1
+
+    def test_format_context_fallback_metadata_keys(self) -> None:
+        chroma_mock = MagicMock()
+        service = DocumentRetrievalService(chroma_store=chroma_mock, top_k=1)
+
+        results: list[dict[str, Any]] = [
+            {
+                "content": "Fallback test.",
+                "metadata": {
+                    "source": "fallback_source",
+                    "title": "Fallback Title",
+                    "url": "https://fallback.url",
+                    "domain": "fallback.com",
+                },
+            }
+        ]
+
+        formatted, citation_mapping = service.format_context(results)
+
+        assert "Source ID: fallback_source" in formatted
+        assert "Title: Fallback Title" in formatted
+        assert "URL: https://fallback.url" in formatted
+        assert "Domain: fallback.com" in formatted
+
+        assert citation_mapping[1]["metadata"]["source"] == "fallback_source"
+
+    def test_format_context_empty_results(self) -> None:
+        chroma_mock = MagicMock()
+        service = DocumentRetrievalService(chroma_store=chroma_mock, top_k=3)
+
+        formatted, citation_mapping = service.format_context([])
+
+        assert formatted == ""
+        assert citation_mapping == {}
+
+    def test_format_context_citation_id_locked_before_sort(self) -> None:
+        """Verify citation IDs are assigned BEFORE sorting by score."""
+        chroma_mock = MagicMock()
+        service = DocumentRetrievalService(chroma_store=chroma_mock, top_k=3)
+
+        # Results with different scores - will be sorted by score desc
+        results: list[dict[str, Any]] = [
+            {"content": "Low score doc", "metadata": {"source_id": "low"}, "score": 0.1},
+            {"content": "High score doc", "metadata": {"source_id": "high"}, "score": 0.9},
+            {"content": "Medium score doc", "metadata": {"source_id": "med"}, "score": 0.5},
+        ]
+
+        formatted, citation_mapping = service.format_context(results)
+
+        # Citation IDs locked in original order: low=1, high=2, med=3
+        assert citation_mapping[1]["metadata"]["source_id"] == "low"
+        assert citation_mapping[2]["metadata"]["source_id"] == "high"
+        assert citation_mapping[3]["metadata"]["source_id"] == "med"
+
+        # But display order is by score: high, med, low
+        # Check formatted output shows high score doc first (citation [2])
+        assert formatted.index("[2] Source ID: high") < formatted.index("[3] Source ID: med")
+        assert formatted.index("[3] Source ID: med") < formatted.index("[1] Source ID: low")
+
+
 class TestReciprocalRankFusion:
     def test_rrf_fuses_dense_and_bm25_results(self) -> None:
         chroma_mock = MagicMock()
@@ -150,3 +289,4 @@ class TestBM25Retriever:
             assert len(results) == 2
             mock_bm25.assert_called_once()
             mock_bm25_instance.get_scores.assert_called_once()
+

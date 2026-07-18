@@ -22,15 +22,25 @@ STANDARD_METADATA_FIELDS: dict[str, type] = {
 
 def validate_metadata(meta: dict[Any, Any]) -> dict[str, Any]:
     """Fill missing fields with safe defaults; prevent NoneType crashes."""
+    logger.debug("Validating metadata with keys: %s", list(meta.keys()))
     validated: dict[str, Any] = {}
     for key, typ in STANDARD_METADATA_FIELDS.items():
         value = meta.get(key)
         if value is None:
+            logger.debug("Metadata field '%s' missing, using default for type %s", key, typ.__name__)
             value = 0.0 if typ is float else (0 if typ is int else "")
         try:
             validated[key] = typ(value) if not isinstance(value, typ) else value
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as e:
+            logger.warning(
+                "Failed to cast metadata field '%s' (value=%r) to %s: %s, using default",
+                key,
+                value,
+                typ.__name__,
+                e,
+            )
             validated[key] = 0.0 if typ is float else (0 if typ is int else "")
+    logger.debug("Validated metadata keys: %s", list(validated.keys()))
     return validated
 
 
