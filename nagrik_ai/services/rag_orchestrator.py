@@ -7,7 +7,7 @@ from typing import Any
 
 from nagrik_ai.prompts.prompt_loader import load_prompt
 from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
-from nagrik_ai.services.llm_service import LLMService
+from nagrik_ai.services.llm_service import BaseLLMService
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class RAGOrchestrator:
     def __init__(
         self,
         retrieval_service: DocumentRetrievalService,
-        llm_service: LLMService,
+        llm_service: BaseLLMService,
     ) -> None:
         self.retrieval_service = retrieval_service
         self.llm_service = llm_service

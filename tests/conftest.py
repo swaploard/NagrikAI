@@ -6,7 +6,7 @@ import pytest
 
 from nagrik_ai.config.config_models import CrawlerConfig, ParserConfig, SiteConfig
 from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
-from nagrik_ai.services.llm_service import LLMService
+from nagrik_ai.services.llm_service import BaseLLMService
 
 
 @pytest.fixture
@@ -30,8 +30,9 @@ def mock_chroma_store() -> MagicMock:
 
 @pytest.fixture
 def mock_llm_service() -> MagicMock:
-    service = MagicMock(spec=LLMService)
+    service = MagicMock(spec=BaseLLMService)
     service.generate.return_value = "Test response"
+    service.generate_stream.return_value = iter(["Test ", "response"])
     return service
 
 

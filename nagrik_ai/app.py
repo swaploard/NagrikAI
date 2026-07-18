@@ -108,7 +108,7 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
         submit.click(respond_stream, [msg, chatbot], [msg, chatbot, sources_panel])
         clear.click(lambda: ([], "", "### Sources\n\nNo sources yet..."), None, [chatbot, msg, sources_panel])
 
-        gr.Examples(  # type: ignore[call-arg]
+        gr.Examples(
             examples=[
                 "Who all are eligible for the QRMP scheme?",
                 "What is IFF?",

@@ -6,6 +6,12 @@ from typing import Annotated
 
 import typer
 
+from nagrik_ai.config.config_models import CHROMA_PERSIST_DIR, CONTENT_DIR
+from nagrik_ai.factories import create_chroma_store, create_config_manager
+from nagrik_ai.parser.parser import Parser
+from nagrik_ai.utils.text_utils import HybridMarkdownSplitter
+from nagrik_ai.vectorstore.vectorizer import MarkdownVectorizer
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -16,12 +22,6 @@ logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("chromadb").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-
-from nagrik_ai.config.config_models import CHROMA_PERSIST_DIR, CONTENT_DIR
-from nagrik_ai.factories import create_chroma_store, create_config_manager, create_orchestrator
-from nagrik_ai.parser.parser import Parser
-from nagrik_ai.utils.text_utils import HybridMarkdownSplitter
-from nagrik_ai.vectorstore.vectorizer import MarkdownVectorizer
 
 app = typer.Typer(name="nagrik-ai")
 crawl_app = typer.Typer(name="crawl")
@@ -37,7 +37,10 @@ def sites(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Path to site config YAML")] = None,
     output_dir: Annotated[Path, typer.Option("--output", "-o", help="Output directory")] = CONTENT_DIR,
     depth: Annotated[int | None, typer.Option("--depth", "-d", help="Max crawl depth (0 = unlimited)")] = 1,
-    site_names: Annotated[list[str] | None, typer.Option("--site", "-s", help="Site name(s) to crawl (can be repeated, e.g. -s gst -s gst_tutorial)")] = None,
+    site_names: Annotated[
+        list[str] | None,
+        typer.Option("--site", "-s", help="Site name(s) to crawl (can be repeated, e.g. -s gst -s gst_tutorial)"),
+    ] = None,
     manage: Annotated[bool, typer.Option("--manage", "-m", help="Skip already-crawled URLs")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Enable verbose output")] = False,
 ) -> None:
@@ -147,13 +150,24 @@ def app_command(
     ] = CHROMA_PERSIST_DIR,
     share: Annotated[bool, typer.Option("--share", help="Create a public link")] = False,
     port: Annotated[int, typer.Option("--port", help="Port to run on")] = 7860,
+    llm_provider: Annotated[
+        str | None, typer.Option("--llm-provider", help="LLM provider: ollama or openrouter")
+    ] = None,
 ) -> None:
     from nagrik_ai.app import launch
+    from nagrik_ai.factories import RAGOrchestratorFactory
+
+    if llm_provider is None:
+        config_manager = create_config_manager()
+        config = config_manager.load()
+        llm_provider = config.llm_provider
 
     typer.echo("🚀 Starting Gradio app")
     typer.echo(f"📚 Using ChromaDB collection 'nagrik_ai_docs' from '{persist_dir}'")
+    typer.echo(f"🤖 LLM Provider: {llm_provider}")
 
-    orch = create_orchestrator()
+    factory = RAGOrchestratorFactory(persist_directory=str(persist_dir), llm_provider=llm_provider)
+    orch = factory.create_orchestrator()
     launch(orch, share=share, server_port=port)
 
 

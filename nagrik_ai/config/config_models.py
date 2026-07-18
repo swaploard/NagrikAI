@@ -1,8 +1,33 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
+from dotenv import load_dotenv
 from pydantic import BaseModel, HttpUrl
+
+load_dotenv()
+
+
+def _get_env(key: str, default: str) -> str:
+    return os.getenv(key, default)
+
+
+def _get_env_int(key: str, default: int) -> int:
+    value = os.getenv(key)
+    return int(value) if value is not None else default
+
+
+def _get_env_float(key: str, default: float) -> float:
+    value = os.getenv(key)
+    return float(value) if value is not None else default
+
+
+def _get_env_bool(key: str, default: bool) -> bool:
+    value = os.getenv(key)
+    if value is None:
+        return default
+    return value.lower() in {"true", "1", "yes", "on"}
 
 
 class CrawlerConfig(BaseModel):
@@ -10,7 +35,11 @@ class CrawlerConfig(BaseModel):
     request_delay: float = 1.0
     timeout: int = 30
     max_depth: int = 1
-    user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    user_agent: str = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    )
 
 
 class MarkdownConfig(BaseModel):
@@ -40,24 +69,32 @@ class SiteConfig(BaseModel):
     parser: ParserConfig = ParserConfig()
 
 
+class OpenRouterConfig(BaseModel):
+    api_key: str = _get_env("NAGRIKAI_OPENROUTER_API_KEY", "")
+    base_url: str = _get_env("NAGRIKAI_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    model: str = _get_env("NAGRIKAI_OPENROUTER_MODEL", "openrouter/auto")
+
+
 class NagrikAIConfig(BaseModel):
     sites: list[SiteConfig]
-    chroma_persist_dir: str = "chroma_db"
-    content_dir: str = "content"
-    embedding_model: str = "BAAI/bge-m3"
-    ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "qwen2.5:7b"
-    chunk_size: int = 800
-    chunk_overlap: int = 200
-    top_k: int = 5
-    fetch_k: int = 20
-    lambda_mult: float = 0.7
-    reranker_model: str = "BAAI/bge-reranker-large"
-    reranker_enabled: bool = True
-    hybrid_search_enabled: bool = True
-    bm25_k1: float = 1.5
-    bm25_b: float = 0.75
-    rrf_k: int = 60
+    chroma_persist_dir: str = _get_env("NAGRIKAI_CHROMA_PERSIST_DIR", "chroma_db")
+    content_dir: str = _get_env("NAGRIKAI_CONTENT_DIR", "content")
+    embedding_model: str = _get_env("NAGRIKAI_EMBEDDING_MODEL", "BAAI/bge-m3")
+    llm_provider: str = _get_env("NAGRIKAI_LLM_PROVIDER", "ollama")
+    ollama_base_url: str = _get_env("NAGRIKAI_OLLAMA_BASE_URL", "http://localhost:11434")
+    ollama_model: str = _get_env("NAGRIKAI_OLLAMA_MODEL", "qwen2.5:7b")
+    openrouter: OpenRouterConfig = OpenRouterConfig()
+    chunk_size: int = _get_env_int("NAGRIKAI_CHUNK_SIZE", 800)
+    chunk_overlap: int = _get_env_int("NAGRIKAI_CHUNK_OVERLAP", 200)
+    top_k: int = _get_env_int("NAGRIKAI_TOP_K", 5)
+    fetch_k: int = _get_env_int("NAGRIKAI_FETCH_K", 20)
+    lambda_mult: float = _get_env_float("NAGRIKAI_LAMBDA_MULT", 0.7)
+    reranker_model: str = _get_env("NAGRIKAI_RERANKER_MODEL", "BAAI/bge-reranker-large")
+    reranker_enabled: bool = _get_env_bool("NAGRIKAI_RERANKER_ENABLED", True)
+    hybrid_search_enabled: bool = _get_env_bool("NAGRIKAI_HYBRID_SEARCH_ENABLED", True)
+    bm25_k1: float = _get_env_float("NAGRIKAI_BM25_K1", 1.5)
+    bm25_b: float = _get_env_float("NAGRIKAI_BM25_B", 0.75)
+    rrf_k: int = _get_env_int("NAGRIKAI_RRF_K", 60)
 
 
 _defaults = NagrikAIConfig.model_construct(sites=[])
@@ -65,8 +102,12 @@ _defaults = NagrikAIConfig.model_construct(sites=[])
 CHROMA_PERSIST_DIR = Path(str(_defaults.chroma_persist_dir))
 CONTENT_DIR = Path(str(_defaults.content_dir))
 EMBEDDING_MODEL = _defaults.embedding_model
+LLM_PROVIDER = _defaults.llm_provider
 OLLAMA_BASE_URL = _defaults.ollama_base_url
 OLLAMA_MODEL = _defaults.ollama_model
+OPENROUTER_API_KEY = _defaults.openrouter.api_key
+OPENROUTER_BASE_URL = _defaults.openrouter.base_url
+OPENROUTER_MODEL = _defaults.openrouter.model
 CHUNK_SIZE = _defaults.chunk_size
 CHUNK_OVERLAP = _defaults.chunk_overlap
 TOP_K = _defaults.top_k

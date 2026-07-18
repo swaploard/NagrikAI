@@ -5,8 +5,6 @@ from pathlib import Path
 
 from langchain_huggingface import HuggingFaceEmbeddings
 
-logger = logging.getLogger(__name__)
-
 from nagrik_ai.config.config_manager import ConfigManager
 from nagrik_ai.config.config_models import (
     BM25_B,
@@ -16,19 +14,25 @@ from nagrik_ai.config.config_models import (
     FETCH_K,
     HYBRID_SEARCH_ENABLED,
     LAMBDA_MULT,
+    LLM_PROVIDER,
     OLLAMA_BASE_URL,
     OLLAMA_MODEL,
+    OPENROUTER_API_KEY,
+    OPENROUTER_BASE_URL,
+    OPENROUTER_MODEL,
     RERANKER_ENABLED,
     RERANKER_MODEL,
     RRF_K,
     TOP_K,
 )
 from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
-from nagrik_ai.services.llm_service import LLMService
+from nagrik_ai.services.llm_service import BaseLLMService, create_llm_service
 from nagrik_ai.services.rag_orchestrator import RAGOrchestrator
 from nagrik_ai.services.reranker import Reranker
 from nagrik_ai.vectorstore.bm25_retriever import BM25Retriever
 from nagrik_ai.vectorstore.chroma_store import ChromaStore
+
+logger = logging.getLogger(__name__)
 
 
 def create_config_manager(config_path: Path | None = None) -> ConfigManager:
@@ -44,8 +48,16 @@ def create_chroma_store(persist_dir: str | Path | None = None) -> ChromaStore:
     )
 
 
-def create_llm_service() -> LLMService:
-    return LLMService(base_url=OLLAMA_BASE_URL, model=OLLAMA_MODEL)
+def create_llm_service_from_config(config_manager: ConfigManager | None = None) -> BaseLLMService:
+    if config_manager:
+        config = config_manager.load()
+        return create_llm_service(
+            provider=config.llm_provider,
+            base_url=config.ollama_base_url if config.llm_provider == "ollama" else config.openrouter.base_url,
+            model=config.ollama_model if config.llm_provider == "ollama" else config.openrouter.model,
+            api_key=config.openrouter.api_key if config.llm_provider == "openrouter" else None,
+        )
+    return create_llm_service()
 
 
 def create_reranker() -> Reranker | None:
@@ -78,12 +90,15 @@ def create_retrieval_service(chroma_store: ChromaStore | None = None) -> Documen
 
 def create_orchestrator(
     retrieval_service: DocumentRetrievalService | None = None,
-    llm_service: LLMService | None = None,
+    llm_service: BaseLLMService | None = None,
+    config_manager: ConfigManager | None = None,
 ) -> RAGOrchestrator:
     logger.info("Initializing RAG orchestrator")
+    if config_manager is None:
+        config_manager = create_config_manager()
     return RAGOrchestrator(
         retrieval_service=retrieval_service or create_retrieval_service(),
-        llm_service=llm_service or create_llm_service(),
+        llm_service=llm_service or create_llm_service_from_config(config_manager),
     )
 
 
@@ -95,8 +110,12 @@ class RAGOrchestratorFactory:
         collection_name: str = "nagrik_ai_docs",
         persist_directory: str | None = None,
         embedding_model: str = EMBEDDING_MODEL,
+        llm_provider: str = LLM_PROVIDER,
         ollama_base_url: str = OLLAMA_BASE_URL,
         ollama_model: str = OLLAMA_MODEL,
+        openrouter_api_key: str = OPENROUTER_API_KEY,
+        openrouter_base_url: str = OPENROUTER_BASE_URL,
+        openrouter_model: str = OPENROUTER_MODEL,
         top_k: int = TOP_K,
         fetch_k: int = FETCH_K,
         lambda_mult: float = LAMBDA_MULT,
@@ -110,8 +129,12 @@ class RAGOrchestratorFactory:
         self.collection_name = collection_name
         self.persist_directory = persist_directory or str(CHROMA_PERSIST_DIR)
         self.embedding_model = embedding_model
+        self.llm_provider = llm_provider
         self.ollama_base_url = ollama_base_url
         self.ollama_model = ollama_model
+        self.openrouter_api_key = openrouter_api_key
+        self.openrouter_base_url = openrouter_base_url
+        self.openrouter_model = openrouter_model
         self.top_k = top_k
         self.fetch_k = fetch_k
         self.lambda_mult = lambda_mult
@@ -167,8 +190,13 @@ class RAGOrchestratorFactory:
             rrf_k=self.rrf_k,
         )
 
-    def create_llm_service(self) -> LLMService:
-        return LLMService(base_url=self.ollama_base_url, model=self.ollama_model)
+    def create_llm_service(self) -> BaseLLMService:
+        return create_llm_service(
+            provider=self.llm_provider,
+            base_url=self.ollama_base_url if self.llm_provider == "ollama" else self.openrouter_base_url,
+            model=self.ollama_model if self.llm_provider == "ollama" else self.openrouter_model,
+            api_key=self.openrouter_api_key if self.llm_provider == "openrouter" else None,
+        )
 
     def create_orchestrator(self) -> RAGOrchestrator:
         embeddings = self.create_embeddings()
