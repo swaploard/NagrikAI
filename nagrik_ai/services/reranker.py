@@ -25,6 +25,8 @@ class Reranker:
         documents: list[dict[str, Any]],
         top_k: int | None = None,
     ) -> list[dict[str, Any]]:
+        if not documents:
+            return []
         model = self._load_model()
         pairs = [(query, doc["content"]) for doc in documents]
         scores = model.predict(pairs)

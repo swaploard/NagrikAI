@@ -7,26 +7,25 @@ from typing import Any
 import gradio as gr
 
 from nagrik_ai.factories import create_orchestrator
-from nagrik_ai.services.rag_orchestrator import RAGOrchestrator, RAGResponse
+from nagrik_ai.models.rag_result import RAGResult, SourceInfo
+from nagrik_ai.services.citation_service import make_citations_clickable
+from nagrik_ai.services.rag_orchestrator import RAGOrchestrator
 
 logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger(__name__)
 
 
-def _format_citations(citations: dict[int, dict[str, Any]]) -> str:
-    """Format citations for display in sources panel."""
-    if not citations:
+def _format_sources(sources: list[SourceInfo]) -> str:
+    """Format sources for display in sources panel."""
+    if not sources:
         return "No sources yet..."
 
     lines: list[str] = []
-    for num, doc in sorted(citations.items()):
-        meta = doc.get("metadata", {})
-        title = meta.get("title", "Unknown")
-        url = meta.get("citation_url", meta.get("url", "#"))
-        domain = meta.get("domain", "unknown")
-        source_id = meta.get("source_id", "unknown")
-        lines.append(f"**[{num}]** [{title}]({url}) — *{domain}* (source: {source_id})")
+    for s in sources:
+        lines.append(
+            f"**[{s.citation_id}]** [{s.title}]({s.url}) — *{s.domain}* (source: {s.source_id})"
+        )
     return "\n\n".join(lines)
 
 
@@ -49,18 +48,25 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
         chat_history.append({"role": "assistant", "content": "..."})
         yield "", chat_history, "No sources yet..."
 
-        citations_display = ""
         try:
-            stream: Iterator[RAGResponse] = orch.query_stream(message)
+            stream: Iterator[dict[str, Any]] = orch.query_stream(message)
             chat_history.pop()
             assistant_response = ""
-            for rag_response in stream:
-                assistant_response += rag_response.answer
-                if rag_response.citations:
-                    citations_display = _format_citations(rag_response.citations)
-                current_history = chat_history.copy()
-                current_history.append({"role": "assistant", "content": assistant_response})
-                yield "", current_history, citations_display
+            citations_display = ""
+            for chunk in stream:
+                if chunk["type"] == "token":
+                    assistant_response += chunk["content"]
+                    current_history = chat_history.copy()
+                    current_history.append({"role": "assistant", "content": assistant_response})
+                    yield "", current_history, citations_display
+                elif chunk["type"] == "final":
+                    result: RAGResult = chunk["data"]
+                    citations_display = _format_sources(result.sources)
+                    # Make citations clickable in the full response
+                    clickable_response = make_citations_clickable(result.response, result.sources)
+                    current_history = chat_history.copy()
+                    current_history.append({"role": "assistant", "content": clickable_response})
+                    yield "", current_history, citations_display
 
             chat_history.append({"role": "assistant", "content": assistant_response})
             yield "", chat_history, citations_display
@@ -106,7 +112,9 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
 
         msg.submit(respond_stream, [msg, chatbot], [msg, chatbot, sources_panel])
         submit.click(respond_stream, [msg, chatbot], [msg, chatbot, sources_panel])
-        clear.click(lambda: ([], "", "### Sources\n\nNo sources yet..."), None, [chatbot, msg, sources_panel])
+        clear.click(
+            lambda: ([], "", "### Sources\n\nNo sources yet..."), None, [chatbot, msg, sources_panel]
+        )
 
         gr.Examples(
             examples=[

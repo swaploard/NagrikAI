@@ -1,25 +1,31 @@
+"""RAG orchestrator coordinating retrieval, citation management, and LLM generation."""
+
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Iterator
-from dataclasses import dataclass
 from typing import Any
 
+from nagrik_ai.models.rag_result import RAGResult, SourceInfo
 from nagrik_ai.prompts.prompt_loader import load_prompt
+from nagrik_ai.services.citation_service import (
+    assign_citation_ids,
+    deduplicate_for_display,
+    extract_snippet,
+    flatten_doc,
+    format_context_block,
+    validate_citations,
+)
 from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
 from nagrik_ai.services.llm_service import BaseLLMService
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class RAGResponse:
-    """Response from RAG query containing answer and source citations."""
-    answer: str
-    citations: dict[int, dict[str, Any]]  # citation_num -> {source_id, title, url, domain, content, ...}
-
-
 class RAGOrchestrator:
+    """Orchestrates the RAG pipeline: retrieve -> format -> generate -> validate."""
+
     def __init__(
         self,
         retrieval_service: DocumentRetrievalService,
@@ -29,25 +35,157 @@ class RAGOrchestrator:
         self.llm_service = llm_service
         logger.info("Initialized RAG orchestrator")
 
-    def query(self, user_query: str) -> RAGResponse:
+    def query(self, user_query: str) -> RAGResult:
+        """Execute full RAG pipeline and return structured result with citations."""
+        start_time = time.perf_counter()
+
+        # Retrieve documents
         results = self.retrieval_service.retrieve(user_query)
-        context, citation_mapping = self.retrieval_service.format_context(results)
+
+        # Lock citation IDs BEFORE any sorting/filtering
+        results, citation_map = assign_citation_ids(results)
+
+        # Build context blocks (sorted by score for display quality)
+        def get_score(doc: dict[str, Any]) -> float:
+            """Helper to extract score for sorting; default to 0.0 if missing."""
+            score = doc.get("score", 0.0)
+            return float(score) if isinstance(score, (int, float)) else 0.0
+
+        sorted_results = sorted(results, key=get_score, reverse=True)
+        context_blocks = [format_context_block(flatten_doc(doc), int(doc["citation_id"])) for doc in sorted_results]
+        context = "\n\n---\n\n".join(context_blocks)
+
+        # Generate response
         system_prompt = load_prompt("system_prompt")
         user_prompt = load_prompt("user_query", question=user_query, context=context)
-        answer = self.llm_service.generate(user_prompt, system=system_prompt)
-        return RAGResponse(answer=answer, citations=citation_mapping)
+        response = self.llm_service.generate(user_prompt, system=system_prompt)
 
-    def query_stream(self, user_query: str) -> Iterator[RAGResponse]:
+        # Build SourceInfo objects for UI
+        sources: list[SourceInfo] = []
+        for doc in sorted_results:
+            flat = flatten_doc(doc)
+            sources.append(
+                SourceInfo(
+                    title=str(flat.get("title", "Unknown")),
+                    url=str(flat.get("url", "")),
+                    domain=str(flat.get("domain", "")),
+                    source_id=str(flat.get("source_id", "")),
+                    citation_id=int(flat.get("citation_id", 1)),
+                    chunk_index=int(flat.get("chunk_index", 0)),
+                    total_chunks=int(flat.get("total_chunks", 1)),
+                    score=float(flat.get("score", 0.0)),
+                    snippet=extract_snippet(str(flat.get("page_content", flat.get("content", ""))), user_query),
+                )
+            )
+
+        # Deduplicate for display
+        display_sources = deduplicate_for_display(sources)
+
+        # Validate citations
+        citations_valid = validate_citations(response, display_sources)
+        if not citations_valid:
+            logger.warning("Citations missing or out of range — appending source list")
+            response += "\n\n**Sources:**\n"
+            for s in display_sources:
+                response += f"[{s.citation_id}] {s.title} - {s.url}\n"
+
+        latency_ms = (time.perf_counter() - start_time) * 1000
+
+        # Observability logging
+        logger.info(
+            {
+                "query": user_query,
+                "num_sources": len(display_sources),
+                "latency_ms": latency_ms,
+                "citation_ids": [s.citation_id for s in display_sources],
+                "citations_valid": citations_valid,
+            }
+        )
+
+        return RAGResult(
+            response=response,
+            sources=display_sources,
+            citation_map=citation_map,
+            query=user_query,
+            raw_chunks=[str(doc.get("page_content", doc.get("content", ""))) for doc in results],
+            latency_ms=latency_ms,
+            total_chunks_retrieved=len(results),
+            citations_valid=citations_valid,
+        )
+
+    def query_stream(self, user_query: str) -> Iterator[dict[str, Any]]:
+        """Execute RAG pipeline with streaming LLM response."""
+        start_time = time.perf_counter()
+
         results = self.retrieval_service.retrieve(user_query)
-        context, citation_mapping = self.retrieval_service.format_context(results)
+        results, citation_map = assign_citation_ids(results)
+
+        def get_score(doc: dict[str, Any]) -> float:
+            score = doc.get("score", 0.0)
+            return float(score) if isinstance(score, (int, float)) else 0.0
+
+        sorted_results = sorted(results, key=get_score, reverse=True)
+        context_blocks = [format_context_block(flatten_doc(doc), int(doc["citation_id"])) for doc in sorted_results]
+        context = "\n\n---\n\n".join(context_blocks)
+
         system_prompt = load_prompt("system_prompt")
         user_prompt = load_prompt("user_query", question=user_query, context=context)
 
-        first_chunk = True
+        sources: list[SourceInfo] = []
+        for doc in sorted_results:
+            flat = flatten_doc(doc)
+            sources.append(
+                SourceInfo(
+                    title=str(flat.get("title", "Unknown")),
+                    url=str(flat.get("url", "")),
+                    domain=str(flat.get("domain", "")),
+                    source_id=str(flat.get("source_id", "")),
+                    citation_id=int(flat.get("citation_id", 1)),
+                    chunk_index=int(flat.get("chunk_index", 0)),
+                    total_chunks=int(flat.get("total_chunks", 1)),
+                    score=float(flat.get("score", 0.0)),
+                    snippet=extract_snippet(str(flat.get("page_content", flat.get("content", ""))), user_query),
+                )
+            )
+
+        display_sources = deduplicate_for_display(sources)
+
+        # Stream tokens
+        full_response = ""
         for chunk in self.llm_service.generate_stream(user_prompt, system=system_prompt):
-            if first_chunk:
-                yield RAGResponse(answer=chunk, citations=citation_mapping)
-                first_chunk = False
-            else:
-                yield RAGResponse(answer=chunk, citations={})
+            full_response += chunk
+            yield {"type": "token", "content": chunk}
 
+        # Post-generation citation validation
+        citations_valid = validate_citations(full_response, display_sources)
+        if not citations_valid:
+            logger.warning("Citations missing or out of range — appending source list")
+            full_response += "\n\n**Sources:**\n"
+            for s in display_sources:
+                full_response += f"[{s.citation_id}] {s.title} - {s.url}\n"
+
+        latency_ms = (time.perf_counter() - start_time) * 1000
+
+        logger.info(
+            {
+                "query": user_query,
+                "num_sources": len(display_sources),
+                "latency_ms": latency_ms,
+                "citation_ids": [s.citation_id for s in display_sources],
+                "citations_valid": citations_valid,
+            }
+        )
+
+        yield {
+            "type": "final",
+            "data": RAGResult(
+                response=full_response,
+                sources=display_sources,
+                citation_map=citation_map,
+                query=user_query,
+                raw_chunks=[str(doc.get("page_content", doc.get("content", ""))) for doc in results],
+                latency_ms=latency_ms,
+                total_chunks_retrieved=len(results),
+                citations_valid=citations_valid,
+            ),
+        }

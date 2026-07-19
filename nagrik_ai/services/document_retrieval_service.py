@@ -1,3 +1,5 @@
+"""Document retrieval service coordinating vector, BM25, and hybrid search."""
+
 from __future__ import annotations
 
 import logging
@@ -5,6 +7,7 @@ from typing import Any, cast
 
 from langchain_core.documents import Document
 
+from nagrik_ai.services.citation_service import format_context_block as fmt_block
 from nagrik_ai.services.reranker import Reranker
 from nagrik_ai.vectorstore.bm25_retriever import BM25Retriever
 from nagrik_ai.vectorstore.chroma_store import ChromaStore, validate_metadata
@@ -25,6 +28,24 @@ def get_score(doc: Document | dict[str, Any]) -> float:
     if isinstance(score, (int, float)):
         return float(score)
     return 0.0
+
+
+def _flatten_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    """Flatten metadata into top-level keys for citation_service.format_context_block."""
+    metadata = doc.get("metadata", {})
+    flat = {
+        "content": doc.get("content", ""),
+        "page_content": doc.get("content", ""),
+        "source_id": metadata.get("source_id", metadata.get("source", "unknown")),
+        "title": metadata.get("title", "Unknown"),
+        "url": metadata.get("citation_url", metadata.get("url", "unknown")),
+        "domain": metadata.get("domain", "unknown"),
+        "chunk_index": metadata.get("chunk_index", 0),
+        "total_chunks": metadata.get("total_chunks", 1),
+        "score": doc.get("score", 0.0),
+        "citation_id": doc.get("citation_id", 1),
+    }
+    return flat
 
 
 class DocumentRetrievalService:
@@ -143,58 +164,36 @@ class DocumentRetrievalService:
         return results
 
     def format_context_block(self, doc: dict[str, Any], citation_id: int | None = None) -> str:
-        """Format a single document as a structured context block.
-
-        Args:
-            doc: Document dictionary with content and metadata
-            citation_id: Optional explicit citation ID (for backward compatibility).
-                         If not provided, uses doc["citation_id"] if set.
-        """
-        logger.debug("Formatting context block with citation_id=%s", citation_id)
-        metadata = self._normalize_metadata(doc.get("metadata", {}))
-        source_id = str(metadata.get("source_id", metadata.get("source", "unknown")))
-        title = str(metadata.get("title", "Unknown"))
-        url = str(metadata.get("citation_url", metadata.get("url", "unknown")))
-        domain = str(metadata.get("domain", "unknown"))
-        content = str(doc.get("content", ""))
-
-        # Use locked citation_id from doc, fallback to passed citation_id
-        index = doc.get("citation_id", citation_id or 1)
-
-        logger.debug(
-            "Block %d metadata: source_id=%s, title=%s, url=%s, domain=%s, content_len=%d",
-            index, source_id, title, url, domain, len(content),
-        )
-
-        header = (
-            f"[{index}] Source ID: {source_id} | Title: {title} | "
-            f"URL: {url} | Domain: {domain}"
-        )
-        return f"{header}\nContent: {content}"
+        """Format a single document as a structured context block (delegates to citation_service)."""
+        # Flatten metadata into top-level keys expected by citation_service
+        flat_doc = _flatten_doc(doc)
+        index = flat_doc.get("citation_id", citation_id or 1)
+        return fmt_block(flat_doc, index)
 
     def format_context(self, results: list[dict[str, Any]]) -> tuple[str, dict[int, dict[str, Any]]]:
         """Format results as context string with locked citation IDs.
 
-        Args:
-            results: List of document dicts from retrieve()
-
-        Returns:
-            Tuple of (formatted_context_string, citation_mapping)
-            - formatted_context_string: Ready for LLM prompt
-            - citation_mapping: dict mapping citation_id -> original doc dict
-              for source resolution in UI/citations
+        If citation_ids are not already locked (by orchestrator), lock them here
+        for backward compatibility.
         """
         logger.debug("Formatting context from %d results", len(results))
 
-        # LOCK citation IDs BEFORE any sorting/filtering
-        citation_mapping: dict[int, dict[str, Any]] = {}
+        # LOCK citation IDs if not already locked (backward compatibility)
         for i, doc in enumerate(results, start=1):
-            doc["citation_id"] = i
-            citation_mapping[i] = doc
+            if "citation_id" not in doc:
+                doc["citation_id"] = i
 
         # Sort by score descending for display (doesn't affect citation IDs)
         sorted_results = sorted(results, key=get_score, reverse=True)
         blocks = [self.format_context_block(doc) for doc in sorted_results]
         context = "\n\n---\n\n".join(blocks)
         logger.debug("Formatted context length: %d chars, %d blocks", len(context), len(blocks))
+
+        # Build citation mapping from locked IDs
+        citation_mapping: dict[int, dict[str, Any]] = {}
+        for doc in results:
+            cid = doc.get("citation_id")
+            if cid is not None:
+                citation_mapping[cid] = doc
+
         return context, citation_mapping

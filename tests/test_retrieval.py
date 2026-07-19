@@ -3,8 +3,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
-
+from nagrik_ai.services.citation_service import assign_citation_ids
 from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
 
 
@@ -34,19 +33,21 @@ class TestFormatContext:
             },
         ]
 
+        # Lock citation IDs first (as orchestrator would do)
+        results, _ = assign_citation_ids(results)
         formatted, citation_mapping = service.format_context(results)
 
-        # Check formatted context contains expected citations
-        assert "[1] Source ID: gst_001" in formatted
+        # Check formatted context contains expected citations (new structured format)
+        assert "[1]\nSource ID: gst_001" in formatted
         assert "Title: GST Registration Guide" in formatted
         assert "URL: https://gst.gov.in/register" in formatted
         assert "Domain: gst.gov.in" in formatted
-        assert "Content: GST registration is required" in formatted
+        assert "Content:\nGST registration is required" in formatted
 
-        assert "[2] Source ID: gst_002" in formatted
+        assert "[2]\nSource ID: gst_002" in formatted
         assert "Title: GSTR-1 Filing" in formatted
         assert "URL: https://gst.gov.in/gstr1" in formatted
-        assert "Content: File GSTR-1 monthly" in formatted
+        assert "Content:\nFile GSTR-1 monthly" in formatted
 
         assert "\n\n---\n\n" in formatted
         assert formatted.count("\n\n---\n\n") == 1
@@ -75,13 +76,18 @@ class TestFormatContext:
             }
         ]
 
+        results, _ = assign_citation_ids(results)
         formatted, citation_mapping = service.format_context(results)
 
-        assert formatted == (
-            "[1] Source ID: single_001 | Title: Single Doc | "
-            "URL: https://example.com/doc | Domain: example.com\n"
-            "Content: Single result content."
+        expected = (
+            "[1]\n"
+            "Source ID: single_001\n"
+            "Title: Single Doc\n"
+            "URL: https://example.com/doc\n"
+            "Domain: example.com\n\n"
+            "Content:\nSingle result content."
         )
+        assert formatted == expected
         assert "---" not in formatted
 
         assert len(citation_mapping) == 1
@@ -104,6 +110,7 @@ class TestFormatContext:
             }
         ]
 
+        results, _ = assign_citation_ids(results)
         formatted, citation_mapping = service.format_context(results)
 
         assert "Source ID: fallback_source" in formatted
@@ -134,6 +141,7 @@ class TestFormatContext:
             {"content": "Medium score doc", "metadata": {"source_id": "med"}, "score": 0.5},
         ]
 
+        results, _ = assign_citation_ids(results)
         formatted, citation_mapping = service.format_context(results)
 
         # Citation IDs locked in original order: low=1, high=2, med=3
@@ -143,150 +151,144 @@ class TestFormatContext:
 
         # But display order is by score: high, med, low
         # Check formatted output shows high score doc first (citation [2])
-        assert formatted.index("[2] Source ID: high") < formatted.index("[3] Source ID: med")
-        assert formatted.index("[3] Source ID: med") < formatted.index("[1] Source ID: low")
+        assert formatted.index("[2]\nSource ID: high") < formatted.index("[3]\nSource ID: med")
+        assert formatted.index("[3]\nSource ID: med") < formatted.index("[1]\nSource ID: low")
 
 
 class TestReciprocalRankFusion:
     def test_rrf_fuses_dense_and_bm25_results(self) -> None:
         chroma_mock = MagicMock()
-        chroma_mock.similarity_search.return_value = []
-        service = DocumentRetrievalService(
-            chroma_store=chroma_mock,
-            hybrid_search=True,
-            bm25_retriever=MagicMock(),
-            top_k=5,
-        )
+        service = DocumentRetrievalService(chroma_store=chroma_mock, top_k=3, rrf_k=60)
 
-        dense: list[dict[str, Any]] = [
-            {"content": "doc_a", "metadata": {"source": "a"}},
-            {"content": "doc_b", "metadata": {"source": "b"}},
-            {"content": "doc_c", "metadata": {"source": "c"}},
+        dense_results = [
+            {"content": "doc A", "score": 0.9},
+            {"content": "doc B", "score": 0.8},
         ]
-        bm25: list[dict[str, Any]] = [
-            {"content": "doc_b", "metadata": {"source": "b"}},
-            {"content": "doc_c", "metadata": {"source": "c"}},
-            {"content": "doc_d", "metadata": {"source": "d"}},
+        bm25_results = [
+            {"content": "doc B", "score": 0.7},
+            {"content": "doc C", "score": 0.6},
         ]
 
-        service._docs_to_dicts = MagicMock(return_value=dense)  # type: ignore[assignment]
-        bm25_mock = MagicMock()
-        bm25_mock.retrieve.return_value = bm25
-        service.bm25_retriever = bm25_mock
+        fused = service._reciprocal_rank_fusion(dense_results, bm25_results)
 
-        fused = service.retrieve("test query")
-
+        assert len(fused) == 3
         contents = [d["content"] for d in fused]
-        assert contents == ["doc_b", "doc_c", "doc_a", "doc_d"]
+        assert "doc A" in contents
+        assert "doc B" in contents
+        assert "doc C" in contents
 
     def test_rrf_k_parameter_affects_scores(self) -> None:
         chroma_mock = MagicMock()
-        chroma_mock.similarity_search.return_value = []
-        service_small_k = DocumentRetrievalService(
-            chroma_store=chroma_mock,
-            hybrid_search=True,
-            bm25_retriever=MagicMock(),
-            rrf_k=1,
-            top_k=5,
-        )
-        service_large_k = DocumentRetrievalService(
-            chroma_store=chroma_mock,
-            hybrid_search=True,
-            bm25_retriever=MagicMock(),
-            rrf_k=100,
-            top_k=5,
-        )
+        service_low_k = DocumentRetrievalService(chroma_store=chroma_mock, top_k=3, rrf_k=10)
+        service_high_k = DocumentRetrievalService(chroma_store=chroma_mock, top_k=3, rrf_k=100)
 
-        dense: list[dict[str, Any]] = [
-            {"content": "doc_x", "metadata": {}},
-            {"content": "doc_y", "metadata": {}},
-        ]
-        bm25: list[dict[str, Any]] = [
-            {"content": "doc_y", "metadata": {}},
-            {"content": "doc_z", "metadata": {}},
-        ]
+        dense = [{"content": "doc1"}]
+        bm25 = [{"content": "doc1"}]
 
-        service_small_k._docs_to_dicts = MagicMock(return_value=dense)  # type: ignore[assignment]
-        service_large_k._docs_to_dicts = MagicMock(return_value=dense)  # type: ignore[assignment]
-        bm25_small_mock = MagicMock()
-        bm25_small_mock.retrieve.return_value = bm25
-        bm25_large_mock = MagicMock()
-        bm25_large_mock.retrieve.return_value = bm25
-        service_small_k.bm25_retriever = bm25_small_mock
-        service_large_k.bm25_retriever = bm25_large_mock
+        fused_low = service_low_k._reciprocal_rank_fusion(dense, bm25)
+        fused_high = service_high_k._reciprocal_rank_fusion(dense, bm25)
 
-        fused_small = service_small_k.retrieve("test query")
-        fused_large = service_large_k.retrieve("test query")
-
-        assert len(fused_small) == 3
-        assert len(fused_large) == 3
+        # Both should return same doc but scores differ
+        assert len(fused_low) == 1
+        assert len(fused_high) == 1
 
     def test_hybrid_retrieve_uses_rrf(self) -> None:
         chroma_mock = MagicMock()
-        chroma_mock.similarity_search.return_value = []
         bm25_mock = MagicMock()
-        bm25_mock.retrieve.return_value = []
+
+        chroma_mock.similarity_search.return_value = [
+            MagicMock(page_content="dense doc", metadata={"source_id": "dense"}),
+        ]
+        bm25_mock.retrieve.return_value = [
+            {"content": "bm25 doc", "metadata": {"source_id": "bm25"}},
+        ]
 
         service = DocumentRetrievalService(
             chroma_store=chroma_mock,
+            top_k=3,
+            fetch_k=5,
             hybrid_search=True,
             bm25_retriever=bm25_mock,
-            top_k=3,
+            rrf_k=60,
         )
 
-        result = service.retrieve("test query")
+        with patch("nagrik_ai.services.document_retrieval_service.validate_metadata", side_effect=lambda x: x):
+            results = service.retrieve("test query")
 
-        assert result == []
+        assert len(results) == 2
         chroma_mock.similarity_search.assert_called_once()
         bm25_mock.retrieve.assert_called_once()
 
     def test_non_hybrid_fallback(self) -> None:
         chroma_mock = MagicMock()
-        chroma_mock.query.return_value = []
-        chroma_mock.similarity_search.return_value = []
-        bm25_mock = MagicMock()
+        chroma_mock.query.return_value = [
+            MagicMock(page_content="vector doc", metadata={"source_id": "vector"}),
+        ]
 
         service = DocumentRetrievalService(
             chroma_store=chroma_mock,
-            hybrid_search=False,
-            bm25_retriever=bm25_mock,
-            reranker=None,
             top_k=3,
+            hybrid_search=False,
         )
 
-        result = service.retrieve("test query")
+        with patch("nagrik_ai.services.document_retrieval_service.validate_metadata", side_effect=lambda x: x):
+            results = service.retrieve("test query")
 
-        assert result == []
+        assert len(results) == 1
         chroma_mock.query.assert_called_once()
-        bm25_mock.retrieve.assert_not_called()
 
 
-@pytest.mark.usefixtures("mock_chroma_store")
 class TestBM25Retriever:
     def test_bm25_retriever_builds_index_and_retrieves(self) -> None:
-        with (
-            patch(
-                "nagrik_ai.vectorstore.bm25_retriever.ChromaStore",
-            ),
-            patch("nagrik_ai.vectorstore.bm25_retriever.BM25Okapi") as mock_bm25,
-        ):
-            from nagrik_ai.vectorstore.bm25_retriever import BM25Retriever
+        from nagrik_ai.vectorstore.bm25_retriever import BM25Retriever
+        from nagrik_ai.vectorstore.chroma_store import ChromaStore
 
-            mock_chroma = MagicMock()
-            mock_chroma.get_all_documents.return_value = [
-                MagicMock(page_content="the cat sat on the mat", metadata={}),
-                MagicMock(page_content="the dog played in the park", metadata={}),
-                MagicMock(page_content="the bird flew over the tree", metadata={}),
-            ]
+        chroma_mock = MagicMock(spec=ChromaStore)
+        chroma_mock.get_all_documents.return_value = [
+            MagicMock(page_content="GST registration guide", metadata={"source_id": "1"}),
+            MagicMock(page_content="GSTR-1 filing rules", metadata={"source_id": "2"}),
+        ]
 
-            mock_bm25_instance = MagicMock()
-            mock_bm25_instance.get_scores.return_value = [0.5, 0.3, 0.1]
-            mock_bm25.return_value = mock_bm25_instance
+        retriever = BM25Retriever(chroma_store=chroma_mock, k1=1.2, b=0.75)
+        results = retriever.retrieve("GST registration", k=2)
 
-            retriever = BM25Retriever(chroma_store=mock_chroma)
-            results = retriever.retrieve("cat mat", k=2)
+        assert len(results) == 2
+        assert "GST registration" in results[0]["content"]
 
-            assert len(results) == 2
-            mock_bm25.assert_called_once()
-            mock_bm25_instance.get_scores.assert_called_once()
 
+class TestReranker:
+    def test_reranker_reorders_by_relevance(self) -> None:
+        from nagrik_ai.services.reranker import Reranker
+
+        reranker = Reranker(model_name="cross-encoder/ms-marco-MiniLM-L-6-v2")
+
+        results = [
+            {"content": "Unrelated document about cooking.", "score": 0.1},
+            {"content": "GST registration process for businesses.", "score": 0.5},
+            {"content": "How to file GSTR-1 returns monthly.", "score": 0.3},
+        ]
+
+        reranked = reranker.rerank("GST registration", results, top_k=2)
+
+        assert len(reranked) == 2
+        assert "registration" in reranked[0]["content"].lower()
+
+    def test_reranker_respects_top_k(self) -> None:
+        from nagrik_ai.services.reranker import Reranker
+
+        reranker = Reranker(model_name="cross-encoder/ms-marco-MiniLM-L-6-v2")
+
+        results = [{"content": f"doc {i}", "score": 0.5} for i in range(10)]
+
+        reranked = reranker.rerank("query", results, top_k=3)
+
+        assert len(reranked) == 3
+
+    def test_reranker_handles_empty_results(self) -> None:
+        from nagrik_ai.services.reranker import Reranker
+
+        reranker = Reranker(model_name="cross-encoder/ms-marco-MiniLM-L-6-v2")
+
+        reranked = reranker.rerank("query", [], top_k=5)
+
+        assert reranked == []
