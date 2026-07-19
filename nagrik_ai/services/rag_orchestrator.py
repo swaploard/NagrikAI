@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Iterator
 from typing import Any
@@ -42,35 +43,24 @@ class RAGOrchestrator:
         # Retrieve documents
         results = self.retrieval_service.retrieve(user_query)
 
-        # Lock citation IDs BEFORE any sorting/filtering
-        results, citation_map = assign_citation_ids(results)
-
-        # Build context blocks (sorted by score for display quality)
+        # Build SourceInfo objects with temporary citation_ids for context building
         def get_score(doc: dict[str, Any]) -> float:
-            """Helper to extract score for sorting; default to 0.0 if missing."""
             score = doc.get("score", 0.0)
             return float(score) if isinstance(score, (int, float)) else 0.0
 
         sorted_results = sorted(results, key=get_score, reverse=True)
-        context_blocks = [format_context_block(flatten_doc(doc), int(doc["citation_id"])) for doc in sorted_results]
-        context = "\n\n---\n\n".join(context_blocks)
 
-        # Generate response
-        system_prompt = load_prompt("system_prompt")
-        user_prompt = load_prompt("user_query", question=user_query, context=context)
-        response = self.llm_service.generate(user_prompt, system=system_prompt)
-
-        # Build SourceInfo objects for UI
-        sources: list[SourceInfo] = []
-        for doc in sorted_results:
+        # Build SourceInfo objects for all results (before dedup)
+        all_sources: list[SourceInfo] = []
+        for i, doc in enumerate(sorted_results, start=1):
             flat = flatten_doc(doc)
-            sources.append(
+            all_sources.append(
                 SourceInfo(
                     title=str(flat.get("title", "Unknown")),
                     url=str(flat.get("url", "")),
                     domain=str(flat.get("domain", "")),
                     source_id=str(flat.get("source_id", "")),
-                    citation_id=int(flat.get("citation_id", 1)),
+                    citation_id=i,
                     chunk_index=int(flat.get("chunk_index", 0)),
                     total_chunks=int(flat.get("total_chunks", 1)),
                     score=float(flat.get("score", 0.0)),
@@ -78,11 +68,39 @@ class RAGOrchestrator:
                 )
             )
 
-        # Deduplicate for display
-        display_sources = deduplicate_for_display(sources)
+        # Deduplicate BEFORE final citation IDs
+        display_sources = deduplicate_for_display(all_sources)
+
+        # Re-assign citation IDs sequentially after dedup
+        for i, s in enumerate(display_sources, start=1):
+            s.citation_id = i
+
+        # Build context with final citation IDs
+        context_blocks: list[str] = []
+        for i, s in enumerate(display_sources, start=1):
+            # Find the original doc for this source
+            orig_doc = next(
+                doc
+                for doc in sorted_results
+                if flatten_doc(doc)["source_id"] == s.source_id
+                and flatten_doc(doc)["chunk_index"] == s.chunk_index
+            )
+            context_blocks.append(format_context_block(flatten_doc(orig_doc), i))
+        context = "\n\n---\n\n".join(context_blocks)
+
+        # Lock citation IDs for citation_map (original mapping)
+        _, citation_map = assign_citation_ids(results)
+
+        # Generate response
+        system_prompt = load_prompt("system_prompt")
+        user_prompt = load_prompt("user_query", question=user_query, context=context)
+        response = self.llm_service.generate(user_prompt, system=system_prompt)
 
         # Validate citations
         citations_valid = validate_citations(response, display_sources)
+        logger.debug("LLM response (first 500 chars): %s", response[:500])
+        logger.debug("Cited IDs in response: %s", re.findall(r"\[(\d+)\]", response))
+        logger.debug("Valid source citation_ids: %s", [s.citation_id for s in display_sources])
         if not citations_valid:
             logger.warning("Citations missing or out of range — appending source list")
             response += "\n\n**Sources:**\n"
@@ -118,29 +136,24 @@ class RAGOrchestrator:
         start_time = time.perf_counter()
 
         results = self.retrieval_service.retrieve(user_query)
-        results, citation_map = assign_citation_ids(results)
 
         def get_score(doc: dict[str, Any]) -> float:
             score = doc.get("score", 0.0)
             return float(score) if isinstance(score, (int, float)) else 0.0
 
         sorted_results = sorted(results, key=get_score, reverse=True)
-        context_blocks = [format_context_block(flatten_doc(doc), int(doc["citation_id"])) for doc in sorted_results]
-        context = "\n\n---\n\n".join(context_blocks)
 
-        system_prompt = load_prompt("system_prompt")
-        user_prompt = load_prompt("user_query", question=user_query, context=context)
-
-        sources: list[SourceInfo] = []
-        for doc in sorted_results:
+        # Build SourceInfo objects for all results (before dedup)
+        all_sources: list[SourceInfo] = []
+        for i, doc in enumerate(sorted_results, start=1):
             flat = flatten_doc(doc)
-            sources.append(
+            all_sources.append(
                 SourceInfo(
                     title=str(flat.get("title", "Unknown")),
                     url=str(flat.get("url", "")),
                     domain=str(flat.get("domain", "")),
                     source_id=str(flat.get("source_id", "")),
-                    citation_id=int(flat.get("citation_id", 1)),
+                    citation_id=i,
                     chunk_index=int(flat.get("chunk_index", 0)),
                     total_chunks=int(flat.get("total_chunks", 1)),
                     score=float(flat.get("score", 0.0)),
@@ -148,7 +161,30 @@ class RAGOrchestrator:
                 )
             )
 
-        display_sources = deduplicate_for_display(sources)
+        # Deduplicate BEFORE final citation IDs
+        display_sources = deduplicate_for_display(all_sources)
+
+        # Re-assign citation IDs sequentially after dedup
+        for i, s in enumerate(display_sources, start=1):
+            s.citation_id = i
+
+        # Build context with final citation IDs
+        context_blocks: list[str] = []
+        for i, s in enumerate(display_sources, start=1):
+            orig_doc = next(
+                doc
+                for doc in sorted_results
+                if flatten_doc(doc)["source_id"] == s.source_id
+                and flatten_doc(doc)["chunk_index"] == s.chunk_index
+            )
+            context_blocks.append(format_context_block(flatten_doc(orig_doc), i))
+        context = "\n\n---\n\n".join(context_blocks)
+
+        # Lock citation IDs for citation_map (original mapping)
+        _, citation_map = assign_citation_ids(results)
+
+        system_prompt = load_prompt("system_prompt")
+        user_prompt = load_prompt("user_query", question=user_query, context=context)
 
         # Stream tokens
         full_response = ""

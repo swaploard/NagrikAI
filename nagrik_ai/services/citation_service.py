@@ -40,10 +40,10 @@ def assign_citation_ids(docs: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
 
 
 def deduplicate_for_display(sources: list[SourceInfo]) -> list[SourceInfo]:
-    """Deduplicate by (normalized_url, title); keep first-occurrence citation_id."""
-    seen: dict[tuple[str, str], SourceInfo] = OrderedDict()
+    """Deduplicate by (normalized_url, title, chunk_index); keep first-occurrence citation_id."""
+    seen: dict[tuple[str, str, int], SourceInfo] = OrderedDict()
     for s in sources:
-        key = (normalize_url(s.url), s.title)
+        key = (normalize_url(s.url), s.title, s.chunk_index)
         if key not in seen:
             seen[key] = s
     return list(seen.values())
@@ -62,10 +62,10 @@ def format_context_block(doc: dict[str, object], index: int) -> str:
 
 
 def validate_citations(response: str, sources: list[SourceInfo]) -> bool:
-    """Check all cited IDs are within range and at least one citation exists."""
+    """Check all cited IDs exist in sources and at least one citation exists."""
     cited = set(map(int, re.findall(r"\[(\d+)\]", response)))
-    expected = set(range(1, len(sources) + 1))
-    return cited.issubset(expected) and len(cited) > 0
+    valid_ids = {s.citation_id for s in sources}
+    return cited.issubset(valid_ids) and len(cited) > 0
 
 
 def extract_snippet(text: str, query: str, max_len: int = 160) -> str:
