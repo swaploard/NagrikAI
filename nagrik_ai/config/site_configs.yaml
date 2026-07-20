@@ -37,8 +37,39 @@ sites:
         - script
         - style
 
+  - name: gst_tutorial
+    base_url: https://tutorial.gst.gov.in
+    start_urls:
+      - https://tutorial.gst.gov.in/userguide/returns/index.htm
+      - https://tutorial.gst.gov.in/userguide/returns/FAQs_IFF.htm
+    allowed_domains:
+      - tutorial.gst.gov.in
+    crawler:
+      max_concurrency: 2
+      request_delay: 1.0
+      timeout: 30
+      max_depth: 0
+    parser:
+      content_selector: "body"
+      strip_selectors:
+        - nav
+        - footer
+        - script
+        - style
+
 chroma_persist_dir: chroma_db
 content_dir: content
-embedding_model: all-MiniLM-L6-v2
+embedding_model: BAAI/bge-m3
+reranker_model: BAAI/bge-reranker-large
+reranker_enabled: true
+hybrid_search_enabled: true
+bm25_k1: 1.5
+bm25_b: 0.75
+rrf_k: 60
+llm_provider: ollama
 ollama_base_url: http://localhost:11434
-ollama_model: llama3.2
+ollama_model: mistral:latest
+openrouter:
+  api_key: ""
+  base_url: https://openrouter.ai/api/v1
+  model: openrouter/auto
