@@ -1,0 +1,77 @@
+domains:
+  - id: gst_registration
+    name: "GST Registration & Profile Management"
+    description: "Obtaining, amending, cancelling, or restoring GST identification numbers (GSTIN) for businesses and taxpayers in India."
+    subcategories:
+      - new_registration
+      - core_amendments
+      - non_core_amendments
+      - cancellation_by_taxpayer
+      - department_suo_moto_cancellation
+      - revocation_of_cancellation
+      - composition_scheme_opt_in
+
+  - id: returns_and_compliance
+    name: "Returns and Compliance Filing"
+    description: "Drafting, reconciling, and submitting monthly, quarterly, and annual GST returns to the government portal."
+    subcategories:
+      - gstr1_outward_supplies
+      - gstr3b_summary_return
+      - gstr9_annual_return
+      - gstr9c_reconciliation_statement
+      - qrmp_scheme
+      - late_fees_and_interest
+      - gstr4_composition_returns
+
+  - id: input_tax_credit
+    name: "Input Tax Credit (ITC)"
+    description: "Claiming, reconciling, reversing, and safeguarding tax credit on inward supplies of goods and services."
+    subcategories:
+      - eligibility_criteria_sec16
+      - blocked_credits_sec17_5
+      - itc_reversal_rule37_42_43
+      - gstr2b_reconciliation
+      - capital_goods_credit
+      - block_unblock_itc_ledger
+
+  - id: supply_and_valuation
+    name: "Supply, Valuation & Tax Rates"
+    description: "Determining the taxable event, place/time of supply, classifying items under correct rates, and reverse charge."
+    subcategories:
+      - place_of_supply
+      - time_of_supply
+      - transaction_valuation
+      - hsn_sac_classification
+      - reverse_charge_mechanism
+      - exempted_and_nil_rated_supplies
+
+  - id: refunds_and_assessments
+    name: "Refunds, Audits & Assessments"
+    description: "Claiming refunds of unutilized credit or excess cash ledger balances, and dealing with audits or tax assessments."
+    subcategories:
+      - export_and_lut_refunds
+      - inverted_duty_structure_refunds
+      - rfd01_application_processing
+      - departmental_scrutiny_and_audit
+      - demand_and_recovery
+      - provisional_assessment
+
+  - id: legal_and_appeals
+    name: "Appeals, Disputes & Legal"
+    description: "Challenging department orders, seeking legal clarity, and resolving tax disputes under the GST Act."
+    subcategories:
+      - appeals_to_first_appellate
+      - appellate_tribunal_gstat
+      - authority_for_advance_rulings_aar
+      - compounding_of_offences
+      - summons_search_and_seizure
+
+  - id: portal_ecosystem_and_allied_services
+    name: "GST Portal Ecosystem & Integrations"
+    description: "Secondary modules, specialized utility portals, and central networks that interface with the main GST common portal."
+    subcategories:
+      eway_bill: "E-Way Bill generation, vehicle updates, and consolidated transit tracking"
+      e_invoicing: "Invoice Registration Portals (IRP) for generating Invoice Reference Numbers (IRN) and QR codes"
+      icegate: "Indian Customs Electronic Gateway for cross-matching import data, bill of entry, and IGST refunds"
+      payment_gateways: "CPIN/CIN generation, e-payment challans, over-the-counter payments, and bank settlements"
+      income_tax_pan: "Direct tax cross-verification, PAN mapping, and validation of promoter identities"

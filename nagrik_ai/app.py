@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Generator, Iterator
 from typing import Any
+from uuid import uuid4
 
 import gradio as gr
 
@@ -40,6 +41,7 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
     def respond_stream(
         message: str,
         chat_history: list[dict[str, str]],
+        session_state: str,
     ) -> Generator[tuple[str, list[dict[str, str]], str]]:
         if not chat_history:
             chat_history = []
@@ -49,12 +51,17 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
         yield "", chat_history, "No sources yet..."
 
         try:
-            stream: Iterator[dict[str, Any]] = orch.query_stream(message)
+            logger.info("Starting to consume response stream")
+            stream: Iterator[dict[str, Any]] = orch.query_stream(message, session_id=session_state)
             chat_history.pop()
             assistant_response = ""
             citations_display = ""
+            first_token = True
             for chunk in stream:
                 if chunk["type"] == "token":
+                    if first_token:
+                        logger.info("Replacing ellipsis with first meaningful chunk")
+                        first_token = False
                     assistant_response += chunk["content"]
                     current_history = chat_history.copy()
                     current_history.append({"role": "assistant", "content": assistant_response})
@@ -62,7 +69,6 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
                 elif chunk["type"] == "final":
                     result: RAGResult = chunk["data"]
                     citations_display = _format_sources(result.sources)
-                    # Make citations clickable in the full response
                     clickable_response = make_citations_clickable(result.response, result.sources)
                     current_history = chat_history.copy()
                     current_history.append({"role": "assistant", "content": clickable_response})
@@ -79,6 +85,8 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
             yield "", chat_history, citations_display
 
     with gr.Blocks(title="NagrikAI - Indian Immigration Assistant") as demo:
+        session_state = gr.State(value=str(uuid4()))
+
         gr.Markdown("# NagrikAI")
         gr.Markdown(
             "AI-powered Indian immigration assistant. "
@@ -110,10 +118,12 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
                     elem_id="sources-panel",
                 )
 
-        msg.submit(respond_stream, [msg, chatbot], [msg, chatbot, sources_panel])
-        submit.click(respond_stream, [msg, chatbot], [msg, chatbot, sources_panel])
+        msg.submit(respond_stream, [msg, chatbot, session_state], [msg, chatbot, sources_panel])
+        submit.click(respond_stream, [msg, chatbot, session_state], [msg, chatbot, sources_panel])
         clear.click(
-            lambda: ([], "", "### Sources\n\nNo sources yet..."), None, [chatbot, msg, sources_panel]
+            lambda: ([], "", "### Sources\n\nNo sources yet...", str(uuid4())),
+            None,
+            [chatbot, msg, sources_panel, session_state],
         )
 
         gr.Examples(

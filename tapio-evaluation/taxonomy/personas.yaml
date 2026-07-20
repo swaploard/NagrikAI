@@ -1,0 +1,54 @@
+personas:
+  - id: composition_taxpayer
+    name: "Rajesh Kumar"
+    role: "Small Retail Shop Owner (Kirana)"
+    compliance_type: "Composition Scheme"
+    knowledge_level: "Beginner"
+    tone_preference: "Simple, practical, non-legalistic, Hindi-English terms (Hinglish) accepted"
+    background: >
+      Runs a small retail grocery store in Nagpur. Opted for the GST Composition 
+      Scheme to simplify compliance. He has no dedicated accountant, handles 
+      his own filings, and is easily confused by dry legal jargon or section numbers.
+    goals:
+      - "Understand daily business transaction rules without paying high consultant fees."
+      - "Avoid penalties for basic procedural mistakes."
+    typical_queries:
+      - "Can I charge CGST and SGST to my customers on my bill?"
+      - "I bought a display counter for my shop. Can I claim ITC on it?"
+      - "What is the penalty if I file my GSTR-4 return 5 days late?"
+
+  - id: corporate_tax_consultant
+    name: "Meera Iyer"
+    role: "Chartered Accountant (CA) & Corporate Advisor"
+    compliance_type: "Regular Taxpayer (Multi-State SEZ & DTA)"
+    knowledge_level: "Expert"
+    tone_preference: "Highly technical, precise, demanding specific Act sections, rules, and circular citations"
+    background: >
+      A senior tax consultant advising multi-state manufacturing and IT export firms. 
+      She is deeply analytical, knows the law, and uses the RAG system to find niche loopholes, 
+      verify active circulars, or cross-reference recent GST Council decisions.
+    goals:
+      - "Verify strict legal citations for complex Input Tax Credit (ITC) blocks."
+      - "Resolve place of supply conflicts in cross-border transactions."
+    typical_queries:
+      - "Under Section 17(5)(c), is ITC admissible on structural steel foundations for telecommunication towers?"
+      - "Determine the place of supply for software-as-a-service (SaaS) delivered to an SEZ unit under the IGST Act."
+      - "How do we compute the ITC reversal under Rule 42 if we have both exempt and zero-rated export turnovers?"
+
+  - id: foreign_exporter_oidar
+    name: "John Miller"
+    role: "Global E-commerce Merchant (SaaS Provider)"
+    compliance_type: "OIDAR (Online Information Database Access and Retrieval)"
+    knowledge_level: "Intermediate"
+    tone_preference: "Clear, structured, compliance-focused, explaining local Indian concepts"
+    background: >
+      Based in Delaware, US. Sells online learning subscriptions to individual users 
+      and businesses in India. Struggling to understand Indian cross-border tax logic, 
+      such as reverse charge and OIDAR classification.
+    goals:
+      - "Register and pay taxes correctly without physical presence in India."
+      - "Differentiate between B2B and B2C compliance requirements."
+    typical_queries:
+      - "Do I need to charge GST to an Indian consumer purchasing my online courses?"
+      - "How can I verify if my Indian corporate customer's GSTIN is active for reverse charge?"
+      - "What is the rate of IGST applicable to cloud storage services provided to individuals in India?"

@@ -29,6 +29,7 @@ from nagrik_ai.services.document_retrieval_service import DocumentRetrievalServi
 from nagrik_ai.services.llm_service import BaseLLMService, create_llm_service
 from nagrik_ai.services.rag_orchestrator import RAGOrchestrator
 from nagrik_ai.services.reranker import Reranker
+from nagrik_ai.services.tracing import LangSmithTracer, get_tracer
 from nagrik_ai.vectorstore.bm25_retriever import BM25Retriever
 from nagrik_ai.vectorstore.chroma_store import ChromaStore
 
@@ -92,13 +93,16 @@ def create_orchestrator(
     retrieval_service: DocumentRetrievalService | None = None,
     llm_service: BaseLLMService | None = None,
     config_manager: ConfigManager | None = None,
+    tracer: LangSmithTracer | None = None,
 ) -> RAGOrchestrator:
     logger.info("Initializing RAG orchestrator")
     if config_manager is None:
         config_manager = create_config_manager()
+    tracer = tracer or get_tracer()
     return RAGOrchestrator(
         retrieval_service=retrieval_service or create_retrieval_service(),
         llm_service=llm_service or create_llm_service_from_config(config_manager),
+        tracer=tracer,
     )
 
 
@@ -125,6 +129,7 @@ class RAGOrchestratorFactory:
         bm25_k1: float = BM25_K1,
         bm25_b: float = BM25_B,
         rrf_k: int = RRF_K,
+        tracer: LangSmithTracer | None = None,
     ) -> None:
         self.collection_name = collection_name
         self.persist_directory = persist_directory or str(CHROMA_PERSIST_DIR)
@@ -144,6 +149,7 @@ class RAGOrchestratorFactory:
         self.bm25_k1 = bm25_k1
         self.bm25_b = bm25_b
         self.rrf_k = rrf_k
+        self.tracer: LangSmithTracer = tracer or get_tracer()
 
     def create_embeddings(self) -> HuggingFaceEmbeddings:
         return HuggingFaceEmbeddings(
@@ -206,4 +212,5 @@ class RAGOrchestratorFactory:
         return RAGOrchestrator(
             retrieval_service=doc_service,
             llm_service=llm_service,
+            tracer=self.tracer,
         )

@@ -1,5 +1,6 @@
 """Utility functions for loading prompt templates from files."""
 
+import hashlib
 import logging
 from pathlib import Path
 from string import Template
@@ -33,6 +34,27 @@ def get_prompt_path(prompt_name: str) -> str:
 
     # Default to md extension if file doesn't exist yet
     return str(md_path)
+
+
+def get_prompt_version(prompt_name: str) -> str:
+    """Return a stable hash of the prompt template file content.
+
+    Args:
+        prompt_name: Name of the prompt template without extension
+
+    Returns:
+        First 12 hex chars of SHA256 of the file content, or "unknown"
+    """
+    prompt_path = get_prompt_path(prompt_name)
+    try:
+        path = Path(prompt_path)
+        if not path.exists():
+            return "unknown"
+        content = path.read_bytes()
+        return hashlib.sha256(content).hexdigest()[:12]
+    except Exception:
+        logger.exception("Error computing prompt version for %s", prompt_name)
+        return "unknown"
 
 
 def load_prompt(prompt_name: str, **kwargs: Any) -> str:

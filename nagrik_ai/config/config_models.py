@@ -75,6 +75,20 @@ class OpenRouterConfig(BaseModel):
     model: str = _get_env("NAGRIKAI_OPENROUTER_MODEL", "openrouter/auto")
 
 
+class EvaluationConfig(BaseModel):
+    langsmith_project: str = "nagrik-ai-eval"
+    langsmith_api_key: str = _get_env("NAGRIKAI_LANGSMITH_API_KEY", "")
+    langsmith_endpoint: str = _get_env("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
+    langsmith_tracing_enabled: bool = _get_env_bool("LANGSMITH_TRACING_ENABLED", True)
+    langsmith_trace_verbose: bool = _get_env_bool("LANGSMITH_TRACE_VERBOSE", False)
+    deepeval_dataset: str = "nagrik-ai-golden"
+    ragas_dataset: str = "nagrik-ai-golden"
+    golden_dataset_path: str = "data/golden_dataset.jsonl"
+    experiment_prefix: str = "rag-eval"
+    judge_llm_provider: str = _get_env("NAGRIKAI_JUDGE_LLM_PROVIDER", "openrouter")
+    judge_llm_model: str = _get_env("NAGRIKAI_JUDGE_LLM_MODEL", "anthropic/claude-3.5-sonnet")
+
+
 class NagrikAIConfig(BaseModel):
     sites: list[SiteConfig]
     chroma_persist_dir: str = _get_env("NAGRIKAI_CHROMA_PERSIST_DIR", "chroma_db")
@@ -119,5 +133,13 @@ HYBRID_SEARCH_ENABLED = _defaults.hybrid_search_enabled
 BM25_K1 = _defaults.bm25_k1
 BM25_B = _defaults.bm25_b
 RRF_K = _defaults.rrf_k
+
+EVAL_CONFIG = EvaluationConfig()
+
+LANGSMITH_PROJECT = EVAL_CONFIG.langsmith_project
+LANGSMITH_API_KEY = EVAL_CONFIG.langsmith_api_key
+LANGSMITH_ENDPOINT = EVAL_CONFIG.langsmith_endpoint
+LANGSMITH_TRACING_ENABLED = EVAL_CONFIG.langsmith_tracing_enabled
+LANGSMITH_TRACE_VERBOSE = EVAL_CONFIG.langsmith_trace_verbose
 
 del _defaults

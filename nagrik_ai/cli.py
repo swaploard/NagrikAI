@@ -9,6 +9,7 @@ import typer
 from nagrik_ai.config.config_models import CHROMA_PERSIST_DIR, CONTENT_DIR
 from nagrik_ai.factories import create_chroma_store, create_config_manager
 from nagrik_ai.parser.parser import Parser
+from nagrik_ai.services.tracing import get_tracer
 from nagrik_ai.utils.text_utils import HybridMarkdownSplitter
 from nagrik_ai.vectorstore.vectorizer import MarkdownVectorizer
 
@@ -141,6 +142,39 @@ def vectorize(
         typer.echo(f"Vectorizing {site_dir.name}...")
         count = vectorizer.process_directory(str(parsed))
         typer.echo(f"  Added {count} files")
+
+
+trace_app = typer.Typer(name="trace")
+app.add_typer(trace_app, name="trace", help="Test LangSmith tracing")
+
+
+@trace_app.command()
+def test(
+    query: Annotated[str, typer.Argument(help="Test query for tracing")] = "What is QRMP?",
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Enable verbose output")] = False,
+) -> None:
+    if verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    from nagrik_ai.factories import create_orchestrator
+
+    tracer = get_tracer()
+    if not tracer.enabled:
+        typer.echo(
+            "LangSmith tracing is not enabled. Set LANGSMITH_TRACING_ENABLED=true "
+            "and LANGSMITH_API_KEY in your environment.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    typer.echo(f"LangSmith tracing enabled (project: {tracer._project_name})")
+    typer.echo(f"Running test query: {query!r}")
+    orch = create_orchestrator()
+    result = orch.query(query)
+    typer.echo(f"Response ({len(result.response)} chars): {result.response[:200]}...")
+    typer.echo(f"Sources: {len(result.sources)}")
+    typer.echo(f"Latency: {result.latency_ms:.1f}ms")
+    typer.echo("Check LangSmith dashboard for traces.")
 
 
 @app.command()
