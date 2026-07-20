@@ -82,8 +82,7 @@ class RAGOrchestrator:
             orig_doc = next(
                 doc
                 for doc in sorted_results
-                if flatten_doc(doc)["source_id"] == s.source_id
-                and flatten_doc(doc)["chunk_index"] == s.chunk_index
+                if flatten_doc(doc)["source_id"] == s.source_id and flatten_doc(doc)["chunk_index"] == s.chunk_index
             )
             context_blocks.append(format_context_block(flatten_doc(orig_doc), i))
         context = "\n\n---\n\n".join(context_blocks)
@@ -174,8 +173,7 @@ class RAGOrchestrator:
             orig_doc = next(
                 doc
                 for doc in sorted_results
-                if flatten_doc(doc)["source_id"] == s.source_id
-                and flatten_doc(doc)["chunk_index"] == s.chunk_index
+                if flatten_doc(doc)["source_id"] == s.source_id and flatten_doc(doc)["chunk_index"] == s.chunk_index
             )
             context_blocks.append(format_context_block(flatten_doc(orig_doc), i))
         context = "\n\n---\n\n".join(context_blocks)

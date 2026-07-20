@@ -30,12 +30,28 @@ def flatten_doc(doc: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def assign_citation_ids(docs: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[int, dict[str, Any]]]:
+def _make_source_info(doc: dict[str, Any], citation_id: int) -> SourceInfo:
+    """Create SourceInfo from a flattened document."""
+    return SourceInfo(
+        title=str(doc.get("title", "Unknown")),
+        url=str(doc.get("url", "")),
+        domain=str(doc.get("domain", "")),
+        source_id=str(doc.get("source_id", "")),
+        citation_id=citation_id,
+        chunk_index=int(doc.get("chunk_index", 0)),
+        total_chunks=int(doc.get("total_chunks", 1)),
+        score=float(doc.get("score", 0.0)),
+        snippet="",
+    )
+
+
+def assign_citation_ids(docs: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[int, SourceInfo]]:
     """Lock citation IDs before generation — never recompute after dedup/filtering."""
-    mapping: dict[int, dict[str, Any]] = {}
+    mapping: dict[int, SourceInfo] = {}
     for i, doc in enumerate(docs, start=1):
         doc["citation_id"] = i
-        mapping[i] = doc
+        flat = flatten_doc(doc)
+        mapping[i] = _make_source_info(flat, i)
     return docs, mapping
 
 
