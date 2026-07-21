@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import json
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
-from typing import Any, NoReturn
+from dataclasses import dataclass, field
+from typing import Any, NoReturn, cast
 
+from ollama import ChatResponse, Message
 from ollama import Client as OllamaClient
 from openai import OpenAI
-from openai.types.chat import ChatCompletionMessageParam
+from openai.types.chat import (
+    ChatCompletion,
+    ChatCompletionMessageParam,
+    ChatCompletionMessageToolCall,
+)
 
 from nagrik_ai.config.config_models import (
     LLM_PROVIDER,
@@ -34,11 +41,34 @@ class AuthenticationError(LLMError):
     pass
 
 
+class RateLimitError(LLMError):
+    """Raised when the upstream provider rejects the request due to rate limits or exhausted capacity."""
+
+    pass
+
+
+@dataclass
+class ToolCall:
+    """A tool call returned by the LLM."""
+
+    name: str = ""
+    arguments: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
+    id: str = ""
+
+
+@dataclass
+class LLMResponse:
+    """A structured response from the LLM, possibly containing tool calls."""
+
+    content: str | None = None
+    tool_calls: list[ToolCall] | None = None
+
+
 class BaseLLMService(ABC):
     def __init__(
         self,
         tracer: LangSmithTracer | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = 0.7,
         max_tokens: int | None = None,
     ) -> None:
         self.tracer: LangSmithTracer = tracer or get_tracer()
@@ -53,6 +83,16 @@ class BaseLLMService(ABC):
     def generate_stream(self, prompt: str, system: str | None = None) -> Iterator[str]:
         pass
 
+    @abstractmethod
+    def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        system: str | None = None,
+    ) -> LLMResponse:
+        """Send messages and optional tool definitions, returning a structured response."""
+        pass
+
 
 class OllamaLLMService(BaseLLMService):
     def __init__(
@@ -60,7 +100,7 @@ class OllamaLLMService(BaseLLMService):
         base_url: str = OLLAMA_BASE_URL,
         model: str = OLLAMA_MODEL,
         tracer: LangSmithTracer | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = 0.7,
         max_tokens: int | None = None,
     ) -> None:
         super().__init__(tracer=tracer, temperature=temperature, max_tokens=max_tokens)
@@ -169,6 +209,76 @@ class OllamaLLMService(BaseLLMService):
             span.set_outputs(outputs)
 
 
+    def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        system: str | None = None,
+    ) -> LLMResponse:
+        chat_messages = list(messages)
+        if system:
+            chat_messages.insert(0, {"role": "system", "content": system})
+
+        options: dict[str, Any] = {}
+        if self.temperature is not None:
+            options["temperature"] = self.temperature
+        if self.max_tokens is not None:
+            options["num_predict"] = self.max_tokens
+
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": chat_messages,
+            "options": options,
+        }
+        if tools:
+            kwargs["tools"] = tools
+
+        logger.info("Ollama chat (model: %s, tools: %d)", self.model, len(tools or []))
+
+        with self.tracer.trace(
+            "ollama_chat",
+            "llm",
+            inputs={"messages": messages, "model": self.model, "system": system},
+            metadata={
+                "model": self.model,
+                "provider": "ollama",
+                "num_tools": len(tools or []),
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+            },
+        ) as span:
+            span.start_timer()
+            response: ChatResponse = self.client.chat(**kwargs)  # type: ignore[reportUnknownMemberType]
+            message: Message = cast(Message, response.message)  # type: ignore[reportUnknownMemberType]
+            latency = span.elapsed_ms()
+
+            tool_calls: list[ToolCall] | None = None
+            if message.tool_calls:
+                tool_calls = []
+                for idx, tc in enumerate(message.tool_calls):
+                    args = tc.function.arguments
+                    if isinstance(args, str):
+                        args = json.loads(args)
+                    if not isinstance(args, dict):
+                        args = dict(args)
+                    parsed_args = cast("dict[str, Any]", args)
+                    tool_calls.append(ToolCall(
+                        name=tc.function.name,
+                        arguments=parsed_args,
+                        id=getattr(tc, "id", "") or f"call_{idx}",
+                    ))
+
+            outputs: dict[str, Any] = {
+                "latency_ms": latency,
+                "has_tool_calls": tool_calls is not None,
+            }
+            if message.content is not None:
+                outputs["response_length"] = len(message.content)
+            span.set_outputs(outputs)
+
+            return LLMResponse(content=message.content, tool_calls=tool_calls)
+
+
 class OpenRouterLLMService(BaseLLMService):
     def __init__(
         self,
@@ -191,6 +301,25 @@ class OpenRouterLLMService(BaseLLMService):
                 "OpenRouter authentication failed. "
                 "Please check your NAGRIKAI_OPENROUTER_API_KEY in .env or environment variables. "
                 "Get a key from https://openrouter.ai/keys"
+            ) from e
+        if any(
+            token in error_msg
+            for token in (
+                "rate limit",
+                "ratelimit",
+                "too many requests",
+                "429",
+                "resource exhausted",
+                "resourceexhausted",
+                "capacity",
+                "quota",
+                "worker local total request limit",
+            )
+        ):
+            raise RateLimitError(
+                "The AI provider is currently at capacity or rate-limited. "
+                "Please wait a moment and try again. If this persists, consider switching models "
+                "or checking your OpenRouter plan limits."
             ) from e
         raise LLMError(f"OpenRouter API error: {e}") from e
 
@@ -227,13 +356,11 @@ class OpenRouterLLMService(BaseLLMService):
                 }
                 if response.usage:
                     usage = response.usage
-                    token_usage: dict[str, int] = {}
-                    if usage.prompt_tokens is not None:
-                        token_usage["input"] = usage.prompt_tokens
-                    if usage.completion_tokens is not None:
-                        token_usage["output"] = usage.completion_tokens
-                    if usage.total_tokens is not None:
-                        token_usage["total"] = usage.total_tokens
+                    token_usage: dict[str, int] = {
+                        "input": usage.prompt_tokens,
+                        "output": usage.completion_tokens,
+                        "total": usage.total_tokens,
+                    }
                     if token_usage:
                         outputs["token_usage"] = token_usage
                 if response.choices and response.choices[0].finish_reason:
@@ -284,12 +411,9 @@ class OpenRouterLLMService(BaseLLMService):
                     if chunk.choices and chunk.choices[0].finish_reason:
                         finish_reason = chunk.choices[0].finish_reason
                     if chunk.usage:
-                        if chunk.usage.prompt_tokens is not None:
-                            usage_data["input"] = chunk.usage.prompt_tokens
-                        if chunk.usage.completion_tokens is not None:
-                            usage_data["output"] = chunk.usage.completion_tokens
-                        if chunk.usage.total_tokens is not None:
-                            usage_data["total"] = chunk.usage.total_tokens
+                        usage_data["input"] = chunk.usage.prompt_tokens
+                        usage_data["output"] = chunk.usage.completion_tokens
+                        usage_data["total"] = chunk.usage.total_tokens
                 latency = span.elapsed_ms()
                 outputs: dict[str, Any] = {
                     "response_length": len(full_response),
@@ -303,6 +427,86 @@ class OpenRouterLLMService(BaseLLMService):
         except Exception as e:
             if span is not None:
                 span.set_outputs({"error": str(e)})
+            self._handle_error(e)
+
+
+    def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        system: str | None = None,
+    ) -> LLMResponse:
+        chat_messages: list[ChatCompletionMessageParam] = list(messages)  # type: ignore[arg-type]
+        if system and not any(m.get("role") == "system" for m in chat_messages):
+            chat_messages.insert(0, {"role": "system", "content": system})
+
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": chat_messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+        }
+        if tools:
+            kwargs["tools"] = tools
+
+        logger.info("OpenRouter chat (model: %s, tools: %d)", self.model, len(tools or []))
+
+        try:
+            with self.tracer.trace(
+                "openrouter_chat",
+                "llm",
+                inputs={"messages": messages, "model": self.model, "system": system},
+                metadata={
+                    "model": self.model,
+                    "provider": "openrouter",
+                    "num_tools": len(tools or []),
+                    "temperature": self.temperature,
+                    "max_tokens": self.max_tokens,
+                },
+            ) as span:
+                span.start_timer()
+                response = cast(
+                    ChatCompletion, self.client.chat.completions.create(**kwargs)
+                )
+                choice = response.choices[0]
+                message = choice.message
+                latency = span.elapsed_ms()
+
+                tool_calls: list[ToolCall] | None = None
+                if message.tool_calls:
+                    parsed_tool_calls: list[ToolCall] = []
+                    for idx, tc in enumerate(message.tool_calls):
+                        if not isinstance(tc, ChatCompletionMessageToolCall):
+                            continue
+                        name = tc.function.name
+                        arguments = json.loads(tc.function.arguments)
+                        parsed_tool_calls.append(
+                            ToolCall(
+                                name=name,
+                                arguments=arguments,
+                                id=tc.id or f"call_{idx}",
+                            )
+                        )
+                    tool_calls = parsed_tool_calls
+
+                outputs: dict[str, Any] = {
+                    "latency_ms": latency,
+                    "has_tool_calls": tool_calls is not None,
+                }
+                if message.content is not None:
+                    outputs["response_length"] = len(message.content)
+                if response.usage:
+                    usage = response.usage
+                    token_usage: dict[str, int] = {
+                        "input": usage.prompt_tokens,
+                        "output": usage.completion_tokens,
+                        "total": usage.total_tokens,
+                    }
+                    outputs["token_usage"] = token_usage
+                span.set_outputs(outputs)
+
+                return LLMResponse(content=message.content, tool_calls=tool_calls)
+        except Exception as e:
             self._handle_error(e)
 
 

@@ -10,6 +10,7 @@ import gradio as gr
 from nagrik_ai.factories import create_orchestrator
 from nagrik_ai.models.rag_result import RAGResult, SourceInfo
 from nagrik_ai.services.citation_service import make_citations_clickable
+from nagrik_ai.services.llm_service import RateLimitError
 from nagrik_ai.services.rag_orchestrator import RAGOrchestrator
 
 logging.basicConfig(level=logging.INFO)
@@ -68,15 +69,52 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
                     yield "", current_history, citations_display
                 elif chunk["type"] == "final":
                     result: RAGResult = chunk["data"]
+
+                    # Phase 2: web search fallback if RAG returned no answer
+                    if "I could not find this information" in result.response:
+                        logger.info("RAG returned no answer; performing web search fallback")
+                        yield "", chat_history, "Searching the web for more information..."
+                        try:
+                            from nagrik_ai.services.llm_service import create_llm_service
+                            from nagrik_ai.tools.web_search import web_search
+
+                            web_result = web_search(message)
+                            llm = create_llm_service()
+                            synthesis_prompt = (
+                                f"Web search results:\n{web_result}\n\n"
+                                f"Query: {message}\n\n"
+                                f"Provide a comprehensive answer based on these search results."
+                            )
+                            synthesized = llm.generate(
+                                synthesis_prompt,
+                                system="You are a helpful assistant. Answer based on the web search results provided.",
+                            )
+                            clickable = make_citations_clickable(synthesized, [])
+                            chat_history.append({"role": "assistant", "content": clickable})
+                            yield "", chat_history, "Sources: Web search results"
+                            return
+                        except Exception:
+                            logger.exception("Web search fallback failed")
+
                     citations_display = _format_sources(result.sources)
                     clickable_response = make_citations_clickable(result.response, result.sources)
                     current_history = chat_history.copy()
                     current_history.append({"role": "assistant", "content": clickable_response})
                     yield "", current_history, citations_display
 
+            # Only reached if no fallback was performed
             chat_history.append({"role": "assistant", "content": assistant_response})
             yield "", chat_history, citations_display
 
+        except RateLimitError as e:
+            logger.warning("Rate limit / capacity error: %s", e)
+            chat_history.pop()
+            error_message = (
+                "The AI service is temporarily at capacity. Please wait a few moments and try again. "
+                "If this keeps happening, try switching to a different model."
+            )
+            chat_history.append({"role": "assistant", "content": error_message})
+            yield "", chat_history, citations_display
         except Exception:
             logger.exception("Error generating response")
             chat_history.pop()

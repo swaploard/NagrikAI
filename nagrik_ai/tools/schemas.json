@@ -1,0 +1,63 @@
+{
+    "tools": [
+        {
+            "name": "web_search",
+            "description": "Search the web for current information, news, or general knowledge. Use when the user asks about recent events, current prices, weather, news, or topics not covered by the internal knowledge base. Returns a summarized answer with citations from top search results.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query. Be specific and include key terms. For example: 'GST registration process India 2024' not just 'GST'."
+                    }
+                },
+                "required": [
+                    "query"
+                ],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "read_pdf",
+            "description": "Read and extract text from a local PDF file. Use when the user provides a PDF file path and wants to know its contents. Returns the full text (truncated to 50,000 characters). Best for single-document, one-off queries. For multiple PDFs or repeated queries, use RAG ingestion instead.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Absolute or relative path to the PDF file. Must end with .pdf extension."
+                    }
+                },
+                "required": [
+                    "file_path"
+                ],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "rag_search",
+            "description": "Search the internal knowledge base (ChromaDB) for government services information. Use for questions about Indian government schemes, GST, tax filing, legal procedures, official portals, forms, and compliance. Returns a synthesized answer with inline citations [1], [2] linking to source documents. Best for factual, policy, or procedural questions covered by crawled official sources.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The question or search query. Be specific: 'How to file GSTR-1 return' not 'GST returns'."
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Optional session ID for conversation tracking and tracing."
+                    },
+                    "user_id": {
+                        "type": "string",
+                        "description": "Optional user ID for personalization and tracing."
+                    }
+                },
+                "required": [
+                    "query"
+                ],
+                "additionalProperties": false
+            }
+        }
+    ]
+}

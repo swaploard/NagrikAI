@@ -205,5 +205,24 @@ def app_command(
     launch(orch, share=share, server_port=port)
 
 
+agent_app = typer.Typer(name="agent")
+app.add_typer(agent_app, name="agent", help="Chat with the AI agent using tool calling")
+
+
+@agent_app.command()
+def chat(
+    query: str = typer.Argument(help="Your question"),
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Enable verbose output")] = False,
+) -> None:
+    if verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    from nagrik_ai.agent.router import run_agent
+
+    typer.echo(f"Query: {query}")
+    result = run_agent(query)
+    typer.echo(result)
+
+
 if __name__ == "__main__":
     app()
