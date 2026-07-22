@@ -13,6 +13,7 @@ from nagrik_ai.vectorstore.chroma_store import ChromaStore, validate_metadata
 class TextSplitter(Protocol):
     def split_documents(self, documents: list[Document]) -> list[Document]: ...
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -101,10 +102,10 @@ class MarkdownVectorizer:
         return len(all_documents)
 
     def _normalize_metadata(self, metadata: Any) -> dict[str, Any]:
-            normalized: dict[str, Any] = {}
-            for key, value in metadata.items():
-                normalized[key] = value
-            return normalized
+        normalized: dict[str, Any] = {}
+        for key, value in metadata.items():
+            normalized[key] = value
+        return normalized
 
     def _prepare_metadata(
         self,

@@ -159,25 +159,27 @@ class RAGOrchestrator:
             )
 
             cited_ids = [int(m) for m in re.findall(r"\[(\d+)\]", response)]
-            span.set_outputs({
-                "response": response,
-                "num_sources": len(display_sources),
-                "latency_ms": latency_ms,
-                "citations_valid": citations_valid,
-                "response_length": len(response),
-                "citations": [
-                    {
-                        "citation_id": s.citation_id,
-                        "source_id": s.source_id,
-                        "title": s.title,
-                        "url": s.url,
-                        "domain": s.domain,
-                        "score": s.score,
-                    }
-                    for s in display_sources
-                ],
-                "cited_ids_in_response": cited_ids,
-            })
+            span.set_outputs(
+                {
+                    "response": response,
+                    "num_sources": len(display_sources),
+                    "latency_ms": latency_ms,
+                    "citations_valid": citations_valid,
+                    "response_length": len(response),
+                    "citations": [
+                        {
+                            "citation_id": s.citation_id,
+                            "source_id": s.source_id,
+                            "title": s.title,
+                            "url": s.url,
+                            "domain": s.domain,
+                            "score": s.score,
+                        }
+                        for s in display_sources
+                    ],
+                    "cited_ids_in_response": cited_ids,
+                }
+            )
             return result
 
     def query_stream(
@@ -294,25 +296,27 @@ class RAGOrchestrator:
             )
 
             cited_ids = [int(m) for m in re.findall(r"\[(\d+)\]", full_response)]
-            span.set_outputs({
-                "response": full_response,
-                "num_sources": len(display_sources),
-                "latency_ms": latency_ms,
-                "citations_valid": citations_valid,
-                "response_length": len(full_response),
-                "citations": [
-                    {
-                        "citation_id": s.citation_id,
-                        "source_id": s.source_id,
-                        "title": s.title,
-                        "url": s.url,
-                        "domain": s.domain,
-                        "score": s.score,
-                    }
-                    for s in display_sources
-                ],
-                "cited_ids_in_response": cited_ids,
-            })
+            span.set_outputs(
+                {
+                    "response": full_response,
+                    "num_sources": len(display_sources),
+                    "latency_ms": latency_ms,
+                    "citations_valid": citations_valid,
+                    "response_length": len(full_response),
+                    "citations": [
+                        {
+                            "citation_id": s.citation_id,
+                            "source_id": s.source_id,
+                            "title": s.title,
+                            "url": s.url,
+                            "domain": s.domain,
+                            "score": s.score,
+                        }
+                        for s in display_sources
+                    ],
+                    "cited_ids_in_response": cited_ids,
+                }
+            )
 
             yield {
                 "type": "final",

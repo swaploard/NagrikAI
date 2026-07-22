@@ -18,7 +18,7 @@ class TestRealRAGRouting:
     def test_gst_input_tax_credit_routes_to_rag_search(self) -> None:
         """'What is GST input tax credit?' → rag_search with real ChromaDB."""
         query = "What is GST input tax credit?"
-        result = run_agent(query)
+        result, _ = run_agent(query)
 
         assert result is not None
         assert len(result) > 50
@@ -27,7 +27,7 @@ class TestRealRAGRouting:
     def test_section_80c_deductions_routes_to_rag_search(self) -> None:
         """'Explain section 80C deductions' → rag_search."""
         query = "Explain section 80C deductions"
-        result = run_agent(query)
+        result, _ = run_agent(query)
 
         assert result is not None
         assert len(result) > 50
@@ -36,7 +36,7 @@ class TestRealRAGRouting:
     def test_company_leave_policies_routes_to_rag_search(self) -> None:
         """'What are our company leave policies?' → rag_search."""
         query = "What are our company leave policies?"
-        result = run_agent(query)
+        result, _ = run_agent(query)
 
         assert result is not None
         assert len(result) > 50

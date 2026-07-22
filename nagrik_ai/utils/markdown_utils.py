@@ -42,7 +42,7 @@ def find_markdown_files(directory: str, site_filter: str | None = None) -> list[
 
                     if len(path_parts) > 0 and path_parts[0] == site_filter:
                         markdown_files.append(file_path)
-                except (ValueError, IndexError):
+                except ValueError, IndexError:
                     pass
             else:
                 markdown_files.append(file_path)

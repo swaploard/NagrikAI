@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from nagrik_ai.agent.router import run_agent
 from nagrik_ai.services.llm_service import LLMResponse, ToolCall
 
@@ -35,15 +36,18 @@ def test_run_agent_falls_back_to_web_search_when_rag_has_no_answer(monkeypatch: 
         web_calls.append(query)
         return "Web answer"
 
-    # Mock the actual web_search function that gets imported in router.py
-    monkeypatch.setattr("nagrik_ai.agent.router.web_search", fake_web_search)
-    monkeypatch.setattr("nagrik_ai.agent.router.TOOL_REGISTRY", {
-        "rag_search": fake_rag_search,
-        "web_search": fake_web_search,  # This won't actually be called in our implementation
-        "read_pdf": lambda **_kwargs: ""  # type: ignore[return-value]
-    })
+    # Mock the functions used by agent_nodes (used by the agent graph)
+    monkeypatch.setattr("nagrik_ai.agent.agent_nodes.web_search", fake_web_search)
+    monkeypatch.setattr(
+        "nagrik_ai.agent.agent_nodes.TOOL_REGISTRY",
+        {
+            "rag_search": fake_rag_search,
+            "web_search": fake_web_search,
+            "read_pdf": lambda **_kwargs: "",  # type: ignore[return-value]
+        },
+    )
 
-    result = run_agent("What is IFF?", llm_service=stub_llm)
+    result, _ = run_agent("What is IFF?", llm_service=stub_llm)
 
     assert result == "Final answer from fallback"
     assert web_calls == ["What is IFF?"]

@@ -213,24 +213,28 @@ class DocumentRetrievalService:
                     logger.info("Retrieved %d documents", len(reranked))
                     _log_retrieved_docs(reranked)
                     latency = span.elapsed_ms()
-                    span.set_outputs({
-                        "num_results": len(reranked),
-                        "strategy": "hybrid+reranker",
-                        "latency_ms": latency,
-                        "documents": [_extract_doc_metadata(d) for d in reranked],
-                    })
+                    span.set_outputs(
+                        {
+                            "num_results": len(reranked),
+                            "strategy": "hybrid+reranker",
+                            "latency_ms": latency,
+                            "documents": [_extract_doc_metadata(d) for d in reranked],
+                        }
+                    )
                     return reranked
                 fused.sort(key=get_score, reverse=True)
                 result = fused[: self.top_k]
                 logger.info("Retrieved %d documents", len(result))
                 _log_retrieved_docs(result)
                 latency = span.elapsed_ms()
-                span.set_outputs({
-                    "num_results": len(result),
-                    "strategy": "hybrid",
-                    "latency_ms": latency,
-                    "documents": [_extract_doc_metadata(d) for d in result],
-                })
+                span.set_outputs(
+                    {
+                        "num_results": len(result),
+                        "strategy": "hybrid",
+                        "latency_ms": latency,
+                        "documents": [_extract_doc_metadata(d) for d in result],
+                    }
+                )
                 return result
 
             if self.reranker is not None:
@@ -240,12 +244,14 @@ class DocumentRetrievalService:
                 logger.info("Retrieved %d documents", len(reranked))
                 _log_retrieved_docs(reranked)
                 latency = span.elapsed_ms()
-                span.set_outputs({
-                    "num_results": len(reranked),
-                    "strategy": "dense+reranker",
-                    "latency_ms": latency,
-                    "documents": [_extract_doc_metadata(d) for d in reranked],
-                })
+                span.set_outputs(
+                    {
+                        "num_results": len(reranked),
+                        "strategy": "dense+reranker",
+                        "latency_ms": latency,
+                        "documents": [_extract_doc_metadata(d) for d in reranked],
+                    }
+                )
                 return reranked
 
             docs = self.chroma_store.query(
@@ -259,12 +265,14 @@ class DocumentRetrievalService:
             logger.info("Retrieved %d documents", len(results))
             _log_retrieved_docs(results)
             latency = span.elapsed_ms()
-            span.set_outputs({
-                "num_results": len(results),
-                "strategy": "dense",
-                "latency_ms": latency,
-                "documents": [_extract_doc_metadata(d) for d in results],
-            })
+            span.set_outputs(
+                {
+                    "num_results": len(results),
+                    "strategy": "dense",
+                    "latency_ms": latency,
+                    "documents": [_extract_doc_metadata(d) for d in results],
+                }
+            )
             return results
 
     def format_context_block(self, doc: dict[str, Any], citation_id: int | None = None) -> str:

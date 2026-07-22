@@ -14,9 +14,7 @@ class BM25Okapi:
         b: float = 0.75,
         epsilon: float = 0.25,
     ) -> None: ...
-
     def get_scores(self, query: Sequence[str]) -> list[float]: ...
-
     def get_top_n(
         self,
         query: Sequence[str],

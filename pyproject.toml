@@ -16,6 +16,8 @@ dependencies = [
     "pydantic>=2,<3",
     "pyyaml>=6,<7",
     "langchain>=0.3,<1",
+    "langchain-core>=0.3,<1",
+    "langgraph>=0.6.11,<0.7",
     "langchain-chroma>=0.2,<1",
     "langchain-community>=0.3,<1",
     "chromadb>=1.5,<2",
@@ -29,6 +31,7 @@ dependencies = [
     "langchain-huggingface>=0.3.1",
     "rank-bm25>=0.2,<1",
     "langsmith>=0.3.0,<1",
+    "langgraph-checkpoint-sqlite>=2.0,<3",
 ]
 
 [project.optional-dependencies]
@@ -89,6 +92,12 @@ mypy_path = ["typings"]
 [[tool.mypy.overrides]]
 module = ["chromadb.*", "gradio.*", "sentence_transformers.*", "ollama.*"]
 ignore_missing_imports = true
+
+[tool.pyright]
+reportUnknownMemberType = false
+reportMissingTypeStubs = false
+reportMissingModuleSource = false
+reportMissingImports = false
 
 [dependency-groups]
 dev = [

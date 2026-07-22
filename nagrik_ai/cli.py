@@ -212,6 +212,8 @@ app.add_typer(agent_app, name="agent", help="Chat with the AI agent using tool c
 @agent_app.command()
 def chat(
     query: str = typer.Argument(help="Your question"),
+    session: Annotated[str | None, typer.Option("--session", "-s", help="Session / thread ID to resume")] = None,
+    interactive: Annotated[bool, typer.Option("--interactive", "-i", help="Interactive multi-turn mode")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Enable verbose output")] = False,
 ) -> None:
     if verbose:
@@ -219,9 +221,41 @@ def chat(
 
     from nagrik_ai.agent.router import run_agent
 
-    typer.echo(f"Query: {query}")
-    result = run_agent(query)
-    typer.echo(result)
+    if interactive:
+        _interactive_chat(session_id=session, verbose=verbose)
+        return
+
+    answer, tid = run_agent(query, thread_id=session)
+    typer.echo(f"[session: {tid}]")
+    typer.echo(answer)
+
+
+def _interactive_chat(session_id: str | None = None, verbose: bool = False) -> None:
+    from nagrik_ai.agent.router import run_agent
+
+    if verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    tid: str | None = session_id
+    typer.echo("Interactive chat mode. Type /quit or press Ctrl+C to exit.")
+
+    try:
+        while True:
+            query = typer.prompt("You")
+            if query.strip().lower() in ("/quit", "/exit", "/q"):
+                break
+            if not query.strip():
+                continue
+
+            answer, tid = run_agent(query, thread_id=tid)
+            typer.echo(f"[session: {tid}]")
+            typer.echo(f"Assistant: {answer}")
+            typer.echo()
+    except (EOFError, KeyboardInterrupt):
+        pass
+
+    if tid:
+        typer.echo(f"\nSession ID: {tid}  (use --session {tid} to resume)")
 
 
 if __name__ == "__main__":

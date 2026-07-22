@@ -109,6 +109,7 @@ class NagrikAIConfig(BaseModel):
     bm25_k1: float = _get_env_float("NAGRIKAI_BM25_K1", 1.5)
     bm25_b: float = _get_env_float("NAGRIKAI_BM25_B", 0.75)
     rrf_k: int = _get_env_int("NAGRIKAI_RRF_K", 60)
+    checkpoint_dir: str = _get_env("NAGRIKAI_CHECKPOINT_DIR", "checkpoints")
 
 
 _defaults = NagrikAIConfig.model_construct(sites=[])
@@ -133,6 +134,7 @@ HYBRID_SEARCH_ENABLED = _defaults.hybrid_search_enabled
 BM25_K1 = _defaults.bm25_k1
 BM25_B = _defaults.bm25_b
 RRF_K = _defaults.rrf_k
+CHECKPOINT_DIR = Path(str(_defaults.checkpoint_dir))
 
 EVAL_CONFIG = EvaluationConfig()
 

@@ -15,7 +15,7 @@ from nagrik_ai.agent.router import run_agent
 def test_budget_highlights_routes_to_web_search() -> None:
     """'Latest Indian budget 2026 highlights' → web_search via real Tavily."""
     query = "Latest Indian budget 2026 highlights"
-    result = run_agent(query)
+    result, _ = run_agent(query)
 
     assert result is not None
     assert len(result) > 50
@@ -26,7 +26,7 @@ def test_budget_highlights_routes_to_web_search() -> None:
 def test_inflation_rate_routes_to_web_search() -> None:
     """'Current inflation rate in India' → web_search via real Tavily."""
     query = "Current inflation rate in India"
-    result = run_agent(query)
+    result, _ = run_agent(query)
 
     assert result is not None
     assert len(result) > 50
@@ -36,7 +36,7 @@ def test_inflation_rate_routes_to_web_search() -> None:
 def test_ipl_winner_routes_to_web_search() -> None:
     """'Who won the last IPL?' → web_search via real Tavily."""
     query = "Who won the last IPL?"
-    result = run_agent(query)
+    result, _ = run_agent(query)
 
     assert result is not None
     assert len(result) > 50

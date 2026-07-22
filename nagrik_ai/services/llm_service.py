@@ -208,7 +208,6 @@ class OllamaLLMService(BaseLLMService):
                 outputs["total_duration_ms"] = td / 1_000_000
             span.set_outputs(outputs)
 
-
     def chat(
         self,
         messages: list[dict[str, Any]],
@@ -262,11 +261,13 @@ class OllamaLLMService(BaseLLMService):
                     if not isinstance(args, dict):
                         args = dict(args)
                     parsed_args = cast("dict[str, Any]", args)
-                    tool_calls.append(ToolCall(
-                        name=tc.function.name,
-                        arguments=parsed_args,
-                        id=getattr(tc, "id", "") or f"call_{idx}",
-                    ))
+                    tool_calls.append(
+                        ToolCall(
+                            name=tc.function.name,
+                            arguments=parsed_args,
+                            id=getattr(tc, "id", "") or f"call_{idx}",
+                        )
+                    )
 
             outputs: dict[str, Any] = {
                 "latency_ms": latency,
@@ -429,7 +430,6 @@ class OpenRouterLLMService(BaseLLMService):
                 span.set_outputs({"error": str(e)})
             self._handle_error(e)
 
-
     def chat(
         self,
         messages: list[dict[str, Any]],
@@ -465,9 +465,7 @@ class OpenRouterLLMService(BaseLLMService):
                 },
             ) as span:
                 span.start_timer()
-                response = cast(
-                    ChatCompletion, self.client.chat.completions.create(**kwargs)
-                )
+                response = cast(ChatCompletion, self.client.chat.completions.create(**kwargs))
                 choice = response.choices[0]
                 message = choice.message
                 latency = span.elapsed_ms()

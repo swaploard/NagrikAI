@@ -4,6 +4,9 @@ import json
 import logging
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
+
+from langchain_core.messages import HumanMessage
 
 from nagrik_ai.services.llm_service import BaseLLMService, create_llm_service
 from nagrik_ai.tools.pdf_reader import read_pdf
@@ -48,8 +51,8 @@ AGENT_SYSTEM_PROMPT = (
     "HALLUCINATION PREVENTION RULES:\n"
     "- Never cite a section number, rule number, notification, or URL unless it came "
     "directly from a tool's output.\n"
-    "- If a tool returns no useful information, say: \"I could not find this information "
-    "in the available sources.\"\n"
+    '- If a tool returns no useful information, say: "I could not find this information '
+    'in the available sources."\n'
     "- If you are unsure whether a tool is needed, use a tool rather than guessing.\n"
     "- Never invent case law, statutory citations, or official document references.\n\n"
     "MULTI-TURN BEHAVIOR:\n"
@@ -82,83 +85,76 @@ def load_tool_schemas() -> list[dict[str, Any]]:
     ]
 
 
-def run_agent(query: str, llm_service: BaseLLMService | None = None) -> str:
-    """Run the agent loop: decide, execute tool(s), synthesize answer."""
+_checkpointer: Any = None
+
+
+def _get_checkpointer() -> Any:
+    global _checkpointer
+    if _checkpointer is None:
+        from nagrik_ai.factories import create_checkpointer
+        _checkpointer = create_checkpointer()
+    return _checkpointer
+
+
+def run_agent(
+    query: str,
+    llm_service: BaseLLMService | None = None,
+    thread_id: str | None = None,
+) -> tuple[str, str]:
+    """Run the agent graph: decide, execute tool(s), synthesize answer.
+
+    Args:
+        query: The user's question.
+        llm_service: Optional LLM service override.
+        thread_id: Optional conversation thread ID for multi-turn. If None,
+                   a new thread is created.
+
+    Returns:
+        Tuple of (answer, thread_id). Use thread_id in subsequent calls to
+        continue the same conversation.
+    """
     logger.info("Agent query: %s", query)
 
     if llm_service is None:
         llm_service = create_llm_service()
 
-    tool_schemas = load_tool_schemas()
+    from nagrik_ai.factories import create_agent_graph
+    from nagrik_ai.models.agent_state import AgentState
 
-    messages: list[dict[str, Any]] = [{"role": "user", "content": query}]
-    response = llm_service.chat(messages, tools=tool_schemas, system=AGENT_SYSTEM_PROMPT)
+    checkpointer = _get_checkpointer()
+    agent_graph = create_agent_graph(llm_service=llm_service, checkpointer=checkpointer)
 
-    max_tool_rounds = 3
-    for _ in range(max_tool_rounds):
-        if not response.tool_calls:
-            break
+    tid = thread_id or uuid4().hex
 
-        # Add assistant's message to conversation history
-        assistant_message: dict[str, Any] = {"role": "assistant"}
-        if response.content is not None:
-            assistant_message["content"] = response.content
-        if response.tool_calls:
-            assistant_message["tool_calls"] = [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.name,
-                        "arguments": json.dumps(tc.arguments)
-                    }
-                }
-                for tc in response.tool_calls
-            ]
-        messages.append(assistant_message)
-
-        tool_results: list[dict[str, Any]] = []
-        for tc in response.tool_calls:
-            tool_fn = TOOL_REGISTRY.get(tc.name)
-            if tool_fn is None:
-                logger.warning("Unknown tool: %s", tc.name)
-                result = f"Unknown tool: {tc.name}"
-            else:
-                try:
-                    logger.info("Executing tool: %s with args: %s", tc.name, tc.arguments)
-                    result = tool_fn(**tc.arguments)
-                    if not isinstance(result, str):
-                        result = str(result)
-                except Exception as e:
-                    logger.error("Tool %s failed: %s", tc.name, e)
-                    result = f"Error executing {tc.name}: {e}"
-
-            tool_results.append({"role": "tool", "content": result, "tool_call_id": tc.id})
-
-        messages.extend(tool_results)
-
-        # Check if rag_search returned no useful answer
-        rag_no_answer = any(
-            isinstance(item.get("content"), str)
-            and "I could not find this information" in item.get("content", "")
-            and any(tc.name == "rag_search" for tc in response.tool_calls)
-            for item in tool_results
+    if thread_id is None:
+        initial_state: AgentState = {
+            "query": query,
+            "rewritten_queries": [],
+            "documents": [],
+            "candidate_answers": [],
+            "answer": None,
+            "confidence": None,
+            "citations": [],
+            "errors": [],
+            "metadata": {},
+            "tool_calls": [],
+            "tool_results": [],
+            "current_tool": None,
+            "session_id": None,
+            "user_id": None,
+            "trace_id": None,
+            "context": None,
+            "retrieval_config": {},
+            "messages": [HumanMessage(content=query)],
+        }
+        final_state = agent_graph.invoke(
+            initial_state,
+            config={"configurable": {"thread_id": tid}},
+        )
+    else:
+        final_state = agent_graph.invoke(
+            {"query": query},
+            config={"configurable": {"thread_id": tid}},
         )
 
-        if rag_no_answer:
-            logger.info("RAG returned no useful answer; directly invoking web_search fallback")
-            # Directly call web_search instead of asking LLM to do it
-            web_result = web_search(query)
-            # Build a clean message history for synthesis: user query + web result as context
-            synthesis_messages = [
-                {"role": "user", "content": query},
-                {"role": "user", "content": f"Web search results:\n{web_result}\n\nPlease provide a comprehensive answer based on these search results."},
-            ]
-            # Let LLM synthesize final answer from web results (no tools needed)
-            response = llm_service.chat(synthesis_messages, tools=None, system=AGENT_SYSTEM_PROMPT)
-            break
-
-        # Get next response from LLM (only if we didn't break for fallback)
-        response = llm_service.chat(messages, tools=tool_schemas, system=AGENT_SYSTEM_PROMPT)
-
-    return response.content or ""
+    return final_state.get("answer", "") or "", tid

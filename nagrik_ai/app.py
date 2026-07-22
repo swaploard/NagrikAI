@@ -25,9 +25,7 @@ def _format_sources(sources: list[SourceInfo]) -> str:
 
     lines: list[str] = []
     for s in sources:
-        lines.append(
-            f"**[{s.citation_id}]** [{s.title}]({s.url}) — *{s.domain}* (source: {s.source_id})"
-        )
+        lines.append(f"**[{s.citation_id}]** [{s.title}]({s.url}) — *{s.domain}* (source: {s.source_id})")
     return "\n\n".join(lines)
 
 
@@ -71,7 +69,7 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
                     result: RAGResult = chunk["data"]
 
                     # Phase 2: web search fallback if RAG returned no answer
-                    if "I could not find this information" in result.response:
+                    if not result.sources or not result.citations_valid:
                         logger.info("RAG returned no answer; performing web search fallback")
                         yield "", chat_history, "Searching the web for more information..."
                         try:

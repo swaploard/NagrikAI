@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from langchain_huggingface import HuggingFaceEmbeddings
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.sqlite import SqliteSaver  # pyright: ignore[reportMissingTypeStubs]
+from langgraph.graph.state import CompiledStateGraph
 
+from nagrik_ai.agent.agent_graph import create_agent_graph as _build_agent_graph
+from nagrik_ai.agent.rag_graph import create_rag_graph as _build_rag_graph
 from nagrik_ai.config.config_manager import ConfigManager
 from nagrik_ai.config.config_models import (
     BM25_B,
     BM25_K1,
+    CHECKPOINT_DIR,
     CHROMA_PERSIST_DIR,
     EMBEDDING_MODEL,
     FETCH_K,
@@ -25,6 +32,8 @@ from nagrik_ai.config.config_models import (
     RRF_K,
     TOP_K,
 )
+from nagrik_ai.models.agent_state import AgentState
+from nagrik_ai.prompts.prompt_loader import load_prompt
 from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
 from nagrik_ai.services.llm_service import BaseLLMService, create_llm_service
 from nagrik_ai.services.rag_orchestrator import RAGOrchestrator
@@ -74,6 +83,20 @@ def create_bm25_retriever(chroma_store: ChromaStore) -> BM25Retriever | None:
     return BM25Retriever(chroma_store=chroma_store, k1=BM25_K1, b=BM25_B)
 
 
+def create_checkpointer(
+    db_path: str | Path | None = None,
+) -> SqliteSaver:
+    db = Path(str(db_path or CHECKPOINT_DIR / "agent_checkpoints.db"))
+    db.parent.mkdir(parents=True, exist_ok=True)
+    import sqlite3
+
+    conn = sqlite3.connect(str(db), check_same_thread=False)
+    saver = SqliteSaver(conn)
+    saver.setup()
+    logger.info("Checkpointer initialized at %s", db)
+    return saver
+
+
 def create_retrieval_service(chroma_store: ChromaStore | None = None) -> DocumentRetrievalService:
     store = chroma_store or create_chroma_store()
     bm25 = create_bm25_retriever(store)
@@ -103,6 +126,43 @@ def create_orchestrator(
         retrieval_service=retrieval_service or create_retrieval_service(),
         llm_service=llm_service or create_llm_service_from_config(config_manager),
         tracer=tracer,
+    )
+
+
+def create_rag_graph(
+    retrieval_service: DocumentRetrievalService | None = None,
+    reranker: Reranker | None = None,
+    llm_service: BaseLLMService | None = None,
+    tracer: LangSmithTracer | None = None,
+    checkpointer: BaseCheckpointSaver[Any] | None = None,
+) -> CompiledStateGraph[AgentState, Any, Any, Any]:
+    logger.info("Creating RAG graph with wired dependencies")
+    _tracer = tracer  # Reserved for future tracing integration
+    if retrieval_service is None:
+        retrieval_service = create_retrieval_service()
+    if llm_service is None:
+        llm_service = create_llm_service_from_config()
+    return _build_rag_graph(
+        retrieval_service=retrieval_service,
+        reranker=reranker or create_reranker(),
+        llm_service=llm_service,
+        system_prompt=load_prompt("system_prompt"),
+        checkpointer=checkpointer,
+    )
+
+
+def create_agent_graph(
+    llm_service: BaseLLMService | None = None,
+    tracer: LangSmithTracer | None = None,
+    checkpointer: BaseCheckpointSaver[Any] | None = None,
+) -> CompiledStateGraph[AgentState, Any, Any, Any]:
+    logger.info("Creating agent graph with wired dependencies")
+    _tracer = tracer  # Reserved for future tracing integration
+    if llm_service is None:
+        llm_service = create_llm_service()
+    return _build_agent_graph(
+        llm_service=llm_service,
+        checkpointer=checkpointer,
     )
 
 

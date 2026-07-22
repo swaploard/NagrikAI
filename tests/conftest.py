@@ -39,4 +39,3 @@ def mock_llm_service() -> MagicMock:
 @pytest.fixture
 def mock_retrieval_service(mock_chroma_store: MagicMock) -> DocumentRetrievalService:
     return DocumentRetrievalService(mock_chroma_store, top_k=3)
-

@@ -129,10 +129,10 @@ def remove_javascript(html_content: str) -> str:
 
 
 def _normalize_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
-        normalized: dict[str, Any] = {}
-        for key, value in metadata.items():
-                normalized[key] = value
-        return normalized
+    normalized: dict[str, Any] = {}
+    for key, value in metadata.items():
+        normalized[key] = value
+    return normalized
 
 
 def _chunk_text_safely(
