@@ -80,17 +80,20 @@ def demo_rag_search() -> dict[str, object]:
 
     print("RESPONSE:")
     print(result["response"])
-    print(f"\nLATENCY_MS: {result['latency_ms']}  "
-          f"TOTAL_CHUNKS: {result['total_chunks_retrieved']}  "
-          f"CITATIONS_VALID: {result['citations_valid']}")
+    print(
+        f"\nLATENCY_MS: {result['latency_ms']}  "
+        f"TOTAL_CHUNKS: {result['total_chunks_retrieved']}  "
+        f"CITATIONS_VALID: {result['citations_valid']}"
+    )
     print("\nSOURCES:")
     for i, src in enumerate(result["sources"], 1):
         print(f"  [{i}] {src['title']}  ({src['domain']})  score={src['score']:.4f}")
         print(f"      {src['url']}")
 
     if not result["sources"]:
-        print("\nNOTE: No sources returned. The vector store may be empty — "
-              "run `uv run nagrik-ai vectorize run` first.")
+        print(
+            "\nNOTE: No sources returned. The vector store may be empty — run `uv run nagrik-ai vectorize run` first."
+        )
 
     return result
 
@@ -167,8 +170,7 @@ def synthesize(results: dict[str, object]) -> None:
 
     prompt = (
         "You are given the raw outputs of several tools. Write a single, concise, "
-        "well-structured answer that integrates them. Do not invent facts.\n\n"
-        + "\n\n".join(parts)
+        "well-structured answer that integrates them. Do not invent facts.\n\n" + "\n\n".join(parts)
     )
 
     llm = create_llm_service()
@@ -178,17 +180,13 @@ def synthesize(results: dict[str, object]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Directly invoke NagrikAI real tools (no LLM router)."
-    )
+    parser = argparse.ArgumentParser(description="Directly invoke NagrikAI real tools (no LLM router).")
     parser.add_argument("--rag", action="store_true", help="Run rag_search demo")
     parser.add_argument("--web", action="store_true", help="Run web_search demo")
     parser.add_argument("--pdf", action="store_true", help="Run read_pdf demo")
     parser.add_argument("--all", action="store_true", help="Run all three demos")
-    parser.add_argument("--synthesize", action="store_true",
-                        help="Optionally combine results with an LLM")
-    parser.add_argument("--pdf-path", default=None,
-                        help="Path to an existing PDF for the read_pdf demo")
+    parser.add_argument("--synthesize", action="store_true", help="Optionally combine results with an LLM")
+    parser.add_argument("--pdf-path", default=None, help="Path to an existing PDF for the read_pdf demo")
     args = parser.parse_args()
 
     if not (args.rag or args.web or args.pdf or args.all):

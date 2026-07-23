@@ -149,7 +149,7 @@ class ChromaStore:
             List of documents most similar to the query
         """
         try:
-            results: list[Document]= self.vector_db.similarity_search(
+            results: list[Document] = self.vector_db.similarity_search(
                 query=query_text,
                 k=k,
             )
@@ -256,7 +256,6 @@ class ChromaStore:
                         metadata_typed = cast(dict[str, Any], metadata)
                         validated_metadata = validate_metadata(metadata_typed)
                         result["metadatas"][i] = validated_metadata
-
 
         except Exception:
             logger.exception("Failed to get document %s", document_id)

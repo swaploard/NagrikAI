@@ -32,10 +32,7 @@ def adapt_to_rag_result(
         sources=sources,
         citation_map=citation_map,
         query=query,
-        raw_chunks=[
-            str(doc.get("page_content", doc.get("content", "")))
-            for doc in state.get("documents", [])
-        ],
+        raw_chunks=[str(doc.get("page_content", doc.get("content", ""))) for doc in state.get("documents", [])],
         latency_ms=latency_ms,
         total_chunks_retrieved=len(state.get("documents", [])),
         citations_valid=len(state.get("errors", [])) == 0,

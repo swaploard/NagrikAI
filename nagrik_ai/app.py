@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Generator, Iterator
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -12,6 +13,7 @@ from nagrik_ai.models.rag_result import RAGResult, SourceInfo
 from nagrik_ai.services.citation_service import make_citations_clickable
 from nagrik_ai.services.llm_service import RateLimitError
 from nagrik_ai.services.rag_orchestrator import RAGOrchestrator
+from nagrik_ai.tools.pdf_reader import read_pdf
 
 logging.basicConfig(level=logging.INFO)
 
@@ -29,6 +31,26 @@ def _format_sources(sources: list[SourceInfo]) -> str:
     return "\n\n".join(lines)
 
 
+def handle_pdf_upload(file: Any) -> tuple[str, str]:
+    """Extract text from an uploaded PDF file.
+
+    Args:
+        file: A gradio File object (has a ``name`` attribute pointing to the temp path).
+
+    Returns:
+        A tuple of (extracted_text, status_message).
+    """
+    if file is None:
+        return "", "No PDF uploaded."
+    try:
+        text = read_pdf(file.name)
+        filename = Path(file.name).name
+        status = f"Uploaded **{filename}** — {len(text)} characters extracted."
+        return text, status
+    except Exception as e:
+        return "", f"Error reading PDF: {e}"
+
+
 def _build_ui(orch: RAGOrchestrator) -> gr.Blocks:
     """Build the Gradio interface used by the launcher."""
     return _build_streaming_ui(orch)
@@ -41,6 +63,7 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
         message: str,
         chat_history: list[dict[str, str]],
         session_state: str,
+        pdf_context: str,
     ) -> Generator[tuple[str, list[dict[str, str]], str]]:
         if not chat_history:
             chat_history = []
@@ -51,7 +74,11 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
 
         try:
             logger.info("Starting to consume response stream")
-            stream: Iterator[dict[str, Any]] = orch.query_stream(message, session_id=session_state)
+            if pdf_context:
+                enhanced_query = f"[Uploaded PDF content]\n{pdf_context[:20000]}\n\n[User question]\n{message}"
+            else:
+                enhanced_query = message
+            stream: Iterator[dict[str, Any]] = orch.query_stream(enhanced_query, session_id=session_state)
             chat_history.pop()
             assistant_response = ""
             citations_display = ""
@@ -122,6 +149,7 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
 
     with gr.Blocks(title="NagrikAI - Indian Immigration Assistant") as demo:
         session_state = gr.State(value=str(uuid4()))
+        pdf_context = gr.State(value="")
 
         gr.Markdown("# NagrikAI")
         gr.Markdown(
@@ -148,19 +176,47 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
                     submit = gr.Button("Submit", variant="primary")
                     clear = gr.Button("Clear")
 
+                with gr.Accordion("Upload PDF", open=False):
+                    pdf_upload = gr.File(label="Choose a PDF file", file_types=[".pdf"])
+                    pdf_status = gr.Markdown("No PDF uploaded.")
+
             with gr.Column(scale=1):
                 sources_panel = gr.Markdown(
                     "### Sources\n\nNo sources yet...",
                     elem_id="sources-panel",
                 )
 
-        msg.submit(respond_stream, [msg, chatbot, session_state], [msg, chatbot, sources_panel])
-        submit.click(respond_stream, [msg, chatbot, session_state], [msg, chatbot, sources_panel])
-        clear.click(
-            lambda: ([], "", "### Sources\n\nNo sources yet...", str(uuid4())),
-            None,
-            [chatbot, msg, sources_panel, session_state],
+        msg.submit(
+            respond_stream,
+            [msg, chatbot, session_state, pdf_context],
+            [msg, chatbot, sources_panel],
         )
+        submit.click(
+            respond_stream,
+            [msg, chatbot, session_state, pdf_context],
+            [msg, chatbot, sources_panel],
+        )
+        clear.click(
+            lambda: (
+                [],
+                "",
+                "### Sources\n\nNo sources yet...",
+                str(uuid4()),
+                "",
+                "No PDF uploaded.",
+            ),
+            None,
+            [
+                chatbot,
+                msg,
+                sources_panel,
+                session_state,
+                pdf_context,
+                pdf_status,
+            ],
+        )
+
+        pdf_upload.change(handle_pdf_upload, [pdf_upload], [pdf_context, pdf_status])
 
         gr.Examples(
             examples=[

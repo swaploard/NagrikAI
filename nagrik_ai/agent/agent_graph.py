@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 def _needs_fallback(state: AgentState) -> bool:
     import re
+
     tool_results = state.get("tool_results", [])
     for result in tool_results:
         output = result.get("output", "")
@@ -54,7 +55,7 @@ def create_agent_graph(
     def wrapped_fallback(state: AgentState) -> dict[str, Any]:
         return fallback_web_search_node(state, llm_service)
 
-    workflow.add_node("decide_tool", wrapped_decide_tool)   # pyright: ignore[reportUnknownMemberType]
+    workflow.add_node("decide_tool", wrapped_decide_tool)  # pyright: ignore[reportUnknownMemberType]
     workflow.add_node("execute_tool", execute_tool_node)  # pyright: ignore[reportUnknownMemberType]
     workflow.add_node("synthesize", wrapped_synthesize)  # pyright: ignore[reportUnknownMemberType]
     workflow.add_node("fallback_web_search", wrapped_fallback)  # pyright: ignore[reportUnknownMemberType]

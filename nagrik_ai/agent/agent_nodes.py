@@ -31,9 +31,7 @@ def _base_messages_to_dicts(messages: list[BaseMessage]) -> list[dict[str, Any]]
                             "function": {
                                 "name": tc["name"],
                                 "arguments": (
-                                    json.dumps(tc["args"])
-                                    if isinstance(tc["args"], dict)
-                                    else str(tc["args"])
+                                    json.dumps(tc["args"]) if isinstance(tc["args"], dict) else str(tc["args"])
                                 ),
                             },
                         }
@@ -66,15 +64,11 @@ def decide_tool_node(state: AgentState, llm_service: BaseLLMService) -> dict[str
     current_tool: str | None = None
 
     if response.tool_calls:
-        tool_calls_list = [
-            {"name": tc.name, "arguments": tc.arguments, "id": tc.id}
-            for tc in response.tool_calls
-        ]
+        tool_calls_list = [{"name": tc.name, "arguments": tc.arguments, "id": tc.id} for tc in response.tool_calls]
         current_tool = response.tool_calls[0].name if response.tool_calls else None
 
     ai_tool_calls = [
-        {"name": tc.name, "args": tc.arguments, "id": tc.id, "type": "tool_call"}
-        for tc in (response.tool_calls or [])
+        {"name": tc.name, "args": tc.arguments, "id": tc.id, "type": "tool_call"} for tc in (response.tool_calls or [])
     ]
 
     ai_message = AIMessage(content=response.content or "", tool_calls=ai_tool_calls)

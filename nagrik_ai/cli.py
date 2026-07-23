@@ -251,7 +251,7 @@ def _interactive_chat(session_id: str | None = None, verbose: bool = False) -> N
             typer.echo(f"[session: {tid}]")
             typer.echo(f"Assistant: {answer}")
             typer.echo()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError, KeyboardInterrupt:
         pass
 
     if tid:

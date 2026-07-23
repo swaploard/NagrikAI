@@ -92,6 +92,7 @@ def _get_checkpointer() -> Any:
     global _checkpointer
     if _checkpointer is None:
         from nagrik_ai.factories import create_checkpointer
+
         _checkpointer = create_checkpointer()
     return _checkpointer
 
