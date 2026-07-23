@@ -57,6 +57,234 @@ sites:
         - script
         - style
 
+  - name: income_tax_efiling
+    base_url: https://www.incometax.gov.in
+    start_urls:
+      - https://www.incometax.gov.in/iec/foportal/
+    allowed_domains:
+      - incometax.gov.in
+    crawler:
+      max_concurrency: 3
+      request_delay: 2.0
+      timeout: 60
+      max_depth: 1
+    parser:
+      content_selector: "main"
+      strip_selectors:
+        - nav
+        - footer
+        - script
+        - style
+
+  - name: cbdt
+    base_url: https://www.incometaxindia.gov.in
+    start_urls:
+      - https://www.incometaxindia.gov.in/
+    allowed_domains:
+      - incometaxindia.gov.in
+    crawler:
+      max_concurrency: 3
+      request_delay: 2.0
+      timeout: 60
+      max_depth: 1
+    parser:
+      content_selector: "main"
+      strip_selectors:
+        - nav
+        - footer
+        - script
+        - style
+
+  - name: cbic
+    base_url: https://www.cbic.gov.in
+    start_urls:
+      - https://www.cbic.gov.in/
+    allowed_domains:
+      - cbic.gov.in
+    crawler:
+      max_concurrency: 3
+      request_delay: 2.0
+      timeout: 60
+      max_depth: 1
+    parser:
+      content_selector: "main"
+      strip_selectors:
+        - nav
+        - footer
+        - script
+        - style
+
+  - name: icegate
+    base_url: https://www.icegate.gov.in
+    start_urls:
+      - https://www.icegate.gov.in/
+    allowed_domains:
+      - icegate.gov.in
+    crawler:
+      max_concurrency: 3
+      request_delay: 2.0
+      timeout: 60
+      max_depth: 1
+    parser:
+      content_selector: "main"
+      strip_selectors:
+        - nav
+        - footer
+        - script
+        - style
+
+  - name: tin_nsdl
+    base_url: https://www.tin-nsdl.com
+    start_urls:
+      - https://www.tin-nsdl.com/
+    allowed_domains:
+      - tin-nsdl.com
+    crawler:
+      max_concurrency: 3
+      request_delay: 2.0
+      timeout: 60
+      max_depth: 1
+    parser:
+      content_selector: "main"
+      strip_selectors:
+        - nav
+        - footer
+        - script
+        - style
+
+  - name: ais_portal
+    base_url: https://ais.insight.gov.in
+    start_urls:
+      - https://ais.insight.gov.in/
+    allowed_domains:
+      - ais.insight.gov.in
+    crawler:
+      max_concurrency: 3
+      request_delay: 2.0
+      timeout: 60
+      max_depth: 1
+    parser:
+      content_selector: "main"
+      strip_selectors:
+        - nav
+        - footer
+        - script
+        - style
+
+  - name: traces
+    base_url: https://www.tdscpc.gov.in
+    start_urls:
+      - https://www.tdscpc.gov.in/
+    allowed_domains:
+      - tdscpc.gov.in
+    crawler:
+      max_concurrency: 3
+      request_delay: 2.0
+      timeout: 60
+      max_depth: 1
+    parser:
+      content_selector: "main"
+      strip_selectors:
+        - nav
+        - footer
+        - script
+        - style
+
+  - name: income_tax_cpc
+    base_url: https://www.incometax.gov.in
+    start_urls:
+      - https://www.incometax.gov.in/
+    allowed_domains:
+      - incometax.gov.in
+    crawler:
+      max_concurrency: 3
+      request_delay: 2.0
+      timeout: 60
+      max_depth: 1
+    parser:
+      content_selector: "main"
+      strip_selectors:
+        - nav
+        - footer
+        - script
+        - style
+
+  - name: epay_tax
+    base_url: https://www.incometax.gov.in
+    start_urls:
+      - https://www.incometax.gov.in/iec/foportal/pay-tax-online
+    allowed_domains:
+      - incometax.gov.in
+    crawler:
+      max_concurrency: 3
+      request_delay: 2.0
+      timeout: 60
+      max_depth: 1
+    parser:
+      content_selector: "main"
+      strip_selectors:
+        - nav
+        - footer
+        - script
+        - style
+
+  - name: department_of_revenue
+    base_url: https://dor.gov.in
+    start_urls:
+      - https://dor.gov.in/
+    allowed_domains:
+      - dor.gov.in
+    crawler:
+      max_concurrency: 3
+      request_delay: 2.0
+      timeout: 60
+      max_depth: 1
+    parser:
+      content_selector: "main"
+      strip_selectors:
+        - nav
+        - footer
+        - script
+        - style
+
+  - name: union_budget
+    base_url: https://www.indiabudget.gov.in
+    start_urls:
+      - https://www.indiabudget.gov.in/
+    allowed_domains:
+      - indiabudget.gov.in
+    crawler:
+      max_concurrency: 3
+      request_delay: 2.0
+      timeout: 60
+      max_depth: 1
+    parser:
+      content_selector: "main"
+      strip_selectors:
+        - nav
+        - footer
+        - script
+        - style
+
+  - name: tax_laws_rules
+    base_url: https://www.incometax.gov.in
+    start_urls:
+      - https://www.incometax.gov.in/iec/foportal/help/tax-rules-and-laws
+    allowed_domains:
+      - incometax.gov.in
+    crawler:
+      max_concurrency: 3
+      request_delay: 2.0
+      timeout: 60
+      max_depth: 1
+    parser:
+      content_selector: "main"
+      strip_selectors:
+        - nav
+        - footer
+        - script
+        - style
+
 chroma_persist_dir: chroma_db
 content_dir: content
 embedding_model: BAAI/bge-m3
