@@ -146,6 +146,10 @@ def run_agent(
             "trace_id": None,
             "context": None,
             "retrieval_config": {},
+            "citations_valid": None,
+            "rag_result": None,
+            "_streaming_buffer": None,
+            "_streaming_callback": None,
             "messages": [HumanMessage(content=query)],
         }
         final_state = agent_graph.invoke(

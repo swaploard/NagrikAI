@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 app = typer.Typer(name="nagrik-ai")
 crawl_app = typer.Typer(name="crawl")
-app.add_typer(crawl_app, name="crawl", help="Crawl websites for immigration data")
+app.add_typer(crawl_app, name="crawl", help="Crawl websites for taxation data")
 parse_app = typer.Typer(name="parse")
 app.add_typer(parse_app, name="parse", help="Parse crawled HTML into Markdown")
 vectorize_app = typer.Typer(name="vectorize")
@@ -156,7 +156,7 @@ def test(
     if verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    from nagrik_ai.factories import create_orchestrator
+    from nagrik_ai.agent.rag_graph import run_rag_query
 
     tracer = get_tracer()
     if not tracer.enabled:
@@ -169,8 +169,7 @@ def test(
 
     typer.echo(f"LangSmith tracing enabled (project: {tracer._project_name})")
     typer.echo(f"Running test query: {query!r}")
-    orch = create_orchestrator()
-    result = orch.query(query)
+    result = run_rag_query(query, tracer=tracer)
     typer.echo(f"Response ({len(result.response)} chars): {result.response[:200]}...")
     typer.echo(f"Sources: {len(result.sources)}")
     typer.echo(f"Latency: {result.latency_ms:.1f}ms")
@@ -189,7 +188,6 @@ def app_command(
     ] = None,
 ) -> None:
     from nagrik_ai.app import launch
-    from nagrik_ai.factories import RAGOrchestratorFactory
 
     if llm_provider is None:
         config_manager = create_config_manager()
@@ -200,9 +198,7 @@ def app_command(
     typer.echo(f"📚 Using ChromaDB collection 'nagrik_ai_docs' from '{persist_dir}'")
     typer.echo(f"🤖 LLM Provider: {llm_provider}")
 
-    factory = RAGOrchestratorFactory(persist_directory=str(persist_dir), llm_provider=llm_provider)
-    orch = factory.create_orchestrator()
-    launch(orch, share=share, server_port=port)
+    launch(share=share, server_port=port)
 
 
 agent_app = typer.Typer(name="agent")

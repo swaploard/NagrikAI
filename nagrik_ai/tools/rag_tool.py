@@ -1,70 +1,27 @@
-"""RAG tool wrapper for the RAG orchestrator."""
+"""RAG tool wrapper for the LangGraph RAG pipeline."""
 
 import logging
 from typing import Any
 
-from nagrik_ai.config.config_models import HYBRID_SEARCH_ENABLED, RERANKER_ENABLED, TOP_K
 from nagrik_ai.services.llm_service import create_llm_service
-from nagrik_ai.services.rag_orchestrator import RAGOrchestrator
 from nagrik_ai.services.tracing import get_tracer
 from nagrik_ai.tools.web_search import web_search
 
 logger = logging.getLogger(__name__)
-
-_orchestrator: RAGOrchestrator | None = None
-
-
-def get_orchestrator() -> RAGOrchestrator:
-    """Get or create the singleton RAG orchestrator instance."""
-    global _orchestrator
-    if _orchestrator is None:
-        from nagrik_ai.factories import create_orchestrator
-
-        logger.info("Creating RAG orchestrator singleton")
-        _orchestrator = create_orchestrator()
-    return _orchestrator
 
 
 def rag_search(query: str, session_id: str | None = None, user_id: str | None = None) -> str:
     """Perform a RAG search using the LangGraph pipeline and return the generated response."""
     logger.info("RAG search query: %s", query)
 
-    from nagrik_ai.factories import create_rag_graph
-    from nagrik_ai.models.agent_state import AgentState
+    from nagrik_ai.agent.rag_graph import run_rag_query
 
-    rag_graph = create_rag_graph()
+    result = run_rag_query(query, session_id=session_id, user_id=user_id)
+    answer = result.response
 
-    initial_state: AgentState = {
-        "query": query,
-        "rewritten_queries": [],
-        "documents": [],
-        "candidate_answers": [],
-        "answer": None,
-        "confidence": None,
-        "citations": [],
-        "errors": [],
-        "metadata": {},
-        "tool_calls": [],
-        "tool_results": [],
-        "current_tool": None,
-        "session_id": session_id,
-        "user_id": user_id,
-        "trace_id": None,
-        "context": None,
-        "retrieval_config": {
-            "top_k": TOP_K,
-            "reranker_enabled": HYBRID_SEARCH_ENABLED and RERANKER_ENABLED,
-        },
-        "messages": [],
-    }
-
-    final_state = rag_graph.invoke(initial_state)
-    answer = final_state.get("answer", "") or ""
-
-    confidence = final_state.get("confidence")
     needs_fallback = False
-    if confidence is not None and confidence < 0.5:
-        logger.info("RAG returned low confidence (%s); falling back to web search", confidence)
+    if not result.citations_valid:
+        logger.info("RAG returned invalid citations; falling back to web search")
         needs_fallback = True
     elif "I could not find this information" in answer:
         needs_fallback = True
@@ -104,7 +61,8 @@ def rag_search_with_sources(query: str, session_id: str | None = None, user_id: 
     Returns:
         Dictionary containing response, sources, and metadata.
     """
-    orchestrator = get_orchestrator()
+    from nagrik_ai.agent.rag_graph import run_rag_query
+
     tracer = get_tracer()
 
     logger.info("RAG search with sources query: %s", query)
@@ -117,7 +75,7 @@ def rag_search_with_sources(query: str, session_id: str | None = None, user_id: 
         session_id=session_id,
         user_id=user_id,
     ) as span:
-        result = orchestrator.query(query, session_id=session_id, user_id=user_id)
+        result = run_rag_query(query, session_id=session_id, user_id=user_id, tracer=tracer)
 
         output: dict[str, Any] = {
             "response": result.response,

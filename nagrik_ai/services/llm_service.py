@@ -513,17 +513,23 @@ def create_llm_service(
     base_url: str | None = None,
     model: str | None = None,
     api_key: str | None = None,
+    temperature: float | None = None,
 ) -> BaseLLMService:
+    llm_kwargs: dict[str, Any] = {}
+    if temperature is not None:
+        llm_kwargs["temperature"] = temperature
     provider = provider or LLM_PROVIDER
     if provider == "openrouter":
         return OpenRouterLLMService(
             api_key=api_key or OPENROUTER_API_KEY,
             base_url=base_url or OPENROUTER_BASE_URL,
             model=model or OPENROUTER_MODEL,
+            **llm_kwargs,
         )
     return OllamaLLMService(
         base_url=base_url or OLLAMA_BASE_URL,
         model=model or OLLAMA_MODEL,
+        **llm_kwargs,
     )
 
 

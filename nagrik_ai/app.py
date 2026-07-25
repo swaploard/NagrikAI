@@ -8,11 +8,9 @@ from uuid import uuid4
 
 import gradio as gr
 
-from nagrik_ai.factories import create_orchestrator
 from nagrik_ai.models.rag_result import RAGResult, SourceInfo
 from nagrik_ai.services.citation_service import make_citations_clickable
 from nagrik_ai.services.llm_service import RateLimitError
-from nagrik_ai.services.rag_orchestrator import RAGOrchestrator
 from nagrik_ai.tools.pdf_reader import read_pdf
 
 logging.basicConfig(level=logging.INFO)
@@ -51,12 +49,12 @@ def handle_pdf_upload(file: Any) -> tuple[str, str]:
         return "", f"Error reading PDF: {e}"
 
 
-def _build_ui(orch: RAGOrchestrator) -> gr.Blocks:
+def _build_ui() -> gr.Blocks:
     """Build the Gradio interface used by the launcher."""
-    return _build_streaming_ui(orch)
+    return _build_streaming_ui()
 
 
-def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
+def _build_streaming_ui() -> gr.Blocks:
     """Build a Gradio interface with streaming response support and sources panel."""
 
     def respond_stream(
@@ -78,7 +76,11 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
                 enhanced_query = f"[Uploaded PDF content]\n{pdf_context[:20000]}\n\n[User question]\n{message}"
             else:
                 enhanced_query = message
-            stream: Iterator[dict[str, Any]] = orch.query_stream(enhanced_query, session_id=session_state)
+            from nagrik_ai.agent.rag_graph import stream_rag_query
+
+            stream: Iterator[dict[str, Any]] = stream_rag_query(
+                enhanced_query, session_id=session_state, enable_fallback=True,
+            )
             chat_history.pop()
             assistant_response = ""
             citations_display = ""
@@ -94,40 +96,17 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
                     yield "", current_history, citations_display
                 elif chunk["type"] == "final":
                     result: RAGResult = chunk["data"]
-
-                    # Phase 2: web search fallback if RAG returned no answer
-                    if not result.sources or not result.citations_valid:
-                        logger.info("RAG returned no answer; performing web search fallback")
-                        yield "", chat_history, "Searching the web for more information..."
-                        try:
-                            from nagrik_ai.services.llm_service import create_llm_service
-                            from nagrik_ai.tools.web_search import web_search
-
-                            web_result = web_search(message)
-                            llm = create_llm_service()
-                            synthesis_prompt = (
-                                f"Web search results:\n{web_result}\n\n"
-                                f"Query: {message}\n\n"
-                                f"Provide a comprehensive answer based on these search results."
-                            )
-                            synthesized = llm.generate(
-                                synthesis_prompt,
-                                system="You are a helpful assistant. Answer based on the web search results provided.",
-                            )
-                            clickable = make_citations_clickable(synthesized, [])
-                            chat_history.append({"role": "assistant", "content": clickable})
-                            yield "", chat_history, "Sources: Web search results"
-                            return
-                        except Exception:
-                            logger.exception("Web search fallback failed")
-
-                    citations_display = _format_sources(result.sources)
+                    citations_display = (
+                        "Sources: Web search results"
+                        if not result.citations_valid
+                        else _format_sources(result.sources)
+                    )
                     clickable_response = make_citations_clickable(result.response, result.sources)
+                    assistant_response = clickable_response
                     current_history = chat_history.copy()
                     current_history.append({"role": "assistant", "content": clickable_response})
                     yield "", current_history, citations_display
 
-            # Only reached if no fallback was performed
             chat_history.append({"role": "assistant", "content": assistant_response})
             yield "", chat_history, citations_display
 
@@ -147,22 +126,19 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
             chat_history.append({"role": "assistant", "content": error_message})
             yield "", chat_history, citations_display
 
-    with gr.Blocks(title="NagrikAI - Indian Immigration Assistant") as demo:
+    with gr.Blocks(title="NagrikAI - Indian TAX Assistant") as demo:
         session_state = gr.State(value=str(uuid4()))
         pdf_context = gr.State(value="")
 
         gr.Markdown("# NagrikAI")
-        gr.Markdown(
-            "AI-powered Indian immigration assistant. "
-            "Ask me about residence permits, social security, taxation, and more."
-        )
+        gr.Markdown("AI-powered Indian taxation assistant. Ask me about tax laws, regulations, and compliance.")
 
         with gr.Row():
             with gr.Column(scale=3):
                 chatbot = gr.Chatbot(label="Conversation", height=500)
                 msg = gr.Textbox(
                     label="Your question",
-                    placeholder="Ask about Indian immigration processes...",
+                    placeholder="Ask about Indian taxation...",
                     lines=2,
                 )
 
@@ -231,9 +207,8 @@ def _build_streaming_ui(orch: RAGOrchestrator) -> gr.Blocks:
     return demo  # type: ignore[no-any-return]
 
 
-def launch(orch: RAGOrchestrator | None = None, **kwargs: Any) -> None:
-    orch = orch or create_orchestrator()
-    demo = _build_ui(orch)
+def launch(**kwargs: Any) -> None:
+    demo = _build_ui()
     demo.launch(**kwargs)
 
 
