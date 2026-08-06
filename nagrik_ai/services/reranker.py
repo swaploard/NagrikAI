@@ -34,4 +34,8 @@ class Reranker:
         scored.sort(key=lambda x: x[0], reverse=True)
         if top_k is not None:
             scored = scored[:top_k]
-        return [doc for _, doc in scored]
+        result: list[dict[str, Any]] = []
+        for score, doc in scored:
+            doc["score"] = float(score)
+            result.append(doc)
+        return result

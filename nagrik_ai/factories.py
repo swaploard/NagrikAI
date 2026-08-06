@@ -14,6 +14,8 @@ from nagrik_ai.agent.agent_graph import create_agent_graph as _build_agent_graph
 from nagrik_ai.agent.rag_graph import create_rag_graph as _build_rag_graph
 from nagrik_ai.config.config_manager import ConfigManager
 from nagrik_ai.config.config_models import (
+    AUTHORITY_BONUS,
+    AUTHORITY_RANKING_ENABLED,
     BM25_B,
     BM25_K1,
     CHECKPOINT_DIR,
@@ -22,6 +24,7 @@ from nagrik_ai.config.config_models import (
     FETCH_K,
     HYBRID_SEARCH_ENABLED,
     LAMBDA_MULT,
+    MAX_RESPONSE_TOKENS,
     RERANKER_ENABLED,
     RERANKER_MODEL,
     RRF_K,
@@ -61,8 +64,9 @@ def create_llm_service_from_config(config_manager: ConfigManager | None = None) 
             base_url=config.ollama_base_url if config.llm_provider == "ollama" else config.openrouter.base_url,
             model=config.ollama_model if config.llm_provider == "ollama" else config.openrouter.model,
             api_key=config.openrouter.api_key if config.llm_provider == "openrouter" else None,
+            max_tokens=config.max_response_tokens,
         )
-    return create_llm_service()
+    return create_llm_service(max_tokens=MAX_RESPONSE_TOKENS)
 
 
 def create_reranker() -> Reranker | None:
@@ -104,6 +108,8 @@ def create_retrieval_service(chroma_store: ChromaStore | None = None) -> Documen
         hybrid_search=HYBRID_SEARCH_ENABLED and bm25 is not None,
         bm25_retriever=bm25,
         rrf_k=RRF_K,
+        authority_ranking_enabled=AUTHORITY_RANKING_ENABLED,
+        authority_bonus=AUTHORITY_BONUS,
     )
 
 
@@ -123,7 +129,7 @@ def create_rag_graph(
     if retrieval_service is None:
         retrieval_service = create_retrieval_service()
     if llm_service is None:
-        llm_service = create_llm_service(temperature=0.1)
+        llm_service = create_llm_service(temperature=0.1, max_tokens=MAX_RESPONSE_TOKENS)
     return _build_rag_graph(
         retrieval_service=retrieval_service,
         reranker=reranker or create_reranker(),
@@ -223,4 +229,3 @@ def create_agent_graph(
         llm_service=llm_service,
         checkpointer=checkpointer,
     )
-

@@ -52,6 +52,8 @@ class ConfigManager:
             "bm25_k1": "NAGRIKAI_BM25_K1",
             "bm25_b": "NAGRIKAI_BM25_B",
             "rrf_k": "NAGRIKAI_RRF_K",
+            "authority_ranking_enabled": "NAGRIKAI_AUTHORITY_RANKING_ENABLED",
+            "max_response_tokens": "NAGRIKAI_MAX_RESPONSE_TOKENS",
         }
 
         for key, env_var in env_mappings.items():
@@ -75,11 +77,11 @@ class ConfigManager:
         return raw
 
     def _convert_value(self, key: str, value: str) -> str | int | float | bool:
-        if key in {"chunk_size", "chunk_overlap", "top_k", "fetch_k", "rrf_k"}:
+        if key in {"chunk_size", "chunk_overlap", "top_k", "fetch_k", "rrf_k", "max_response_tokens"}:
             return int(value)
         if key in {"lambda_mult", "bm25_k1", "bm25_b"}:
             return float(value)
-        if key in {"reranker_enabled", "hybrid_search_enabled"}:
+        if key in {"reranker_enabled", "hybrid_search_enabled", "authority_ranking_enabled"}:
             return value.lower() in {"true", "1", "yes", "on"}
         return value
 

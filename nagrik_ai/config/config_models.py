@@ -109,6 +109,18 @@ class NagrikAIConfig(BaseModel):
     bm25_k1: float = _get_env_float("NAGRIKAI_BM25_K1", 1.5)
     bm25_b: float = _get_env_float("NAGRIKAI_BM25_B", 0.75)
     rrf_k: int = _get_env_int("NAGRIKAI_RRF_K", 60)
+    max_response_tokens: int = _get_env_int("NAGRIKAI_MAX_RESPONSE_TOKENS", 600)
+    authority_ranking_enabled: bool = _get_env_bool("NAGRIKAI_AUTHORITY_RANKING_ENABLED", True)
+    authority_bonus: dict[str, float] = {
+        "act": 0.08,
+        "rules": 0.08,
+        "notification": 0.06,
+        "circular": 0.05,
+        "faq": 0.02,
+        "user_guide": 0.01,
+        "help": 0.0,
+        "other": 0.0,
+    }
     checkpoint_dir: str = _get_env("NAGRIKAI_CHECKPOINT_DIR", "checkpoints")
 
 
@@ -134,6 +146,9 @@ HYBRID_SEARCH_ENABLED = _defaults.hybrid_search_enabled
 BM25_K1 = _defaults.bm25_k1
 BM25_B = _defaults.bm25_b
 RRF_K = _defaults.rrf_k
+AUTHORITY_RANKING_ENABLED = _defaults.authority_ranking_enabled
+AUTHORITY_BONUS = dict(_defaults.authority_bonus)
+MAX_RESPONSE_TOKENS = _defaults.max_response_tokens
 CHECKPOINT_DIR = Path(str(_defaults.checkpoint_dir))
 
 EVAL_CONFIG = EvaluationConfig()

@@ -6,6 +6,7 @@ from collections import OrderedDict
 from typing import Any
 
 from nagrik_ai.models.rag_result import SourceInfo
+from nagrik_ai.utils.source_types import authority_rank, classify_source_type
 
 
 def normalize_url(url: str) -> str:
@@ -63,6 +64,20 @@ def deduplicate_for_display(sources: list[SourceInfo]) -> list[SourceInfo]:
         if key not in seen:
             seen[key] = s
     return list(seen.values())
+
+
+def citation_sort_key(doc: dict[str, Any]) -> tuple[int, float, str, str]:
+    """Fully deterministic citation sort key.
+
+    Keys, in order:
+    - ``authority_rank`` ascending — Act > Rules > Notifications > Circulars > FAQs > Manuals,
+      so ``[1]`` points to the Rule rather than the FAQ.
+    - retrieval score descending (pre-bias score).
+    - URL then title lexicographic — tie-break so citation IDs never shift between identical runs.
+    """
+    flat = flatten_doc(doc)
+    rank = authority_rank(classify_source_type(doc.get("metadata", {})))
+    return (rank, -float(flat.get("score", 0.0)), str(flat.get("url", "")), str(flat.get("title", "")))
 
 
 def format_context_block(doc: dict[str, object], index: int) -> str:

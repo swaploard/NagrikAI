@@ -14,6 +14,7 @@ STANDARD_METADATA_FIELDS: dict[str, type] = {
     "url": str,
     "domain": str,
     "source_id": str,
+    "source_type": str,
     "chunk_index": int,
     "total_chunks": int,
     "score": float,
@@ -161,6 +162,36 @@ class ChromaStore:
                     doc.metadata = validate_metadata(raw_metadata)
         except Exception:
             logger.exception("Failed to similarity search vector store")
+            return []
+        else:
+            return results
+
+    def similarity_search_with_scores(
+        self,
+        query_text: str,
+        k: int = 20,
+    ) -> list[tuple[Document, float]]:
+        """Query the vector store and return docs paired with relevance scores.
+
+        Args:
+            query_text: Text to search for
+            k: Number of nearest neighbors to return
+
+        Returns:
+            List of (document, relevance score) pairs, score in [0, 1].
+        """
+        try:
+            results: list[tuple[Document, float]] = self.vector_db.similarity_search_with_relevance_scores(
+                query=query_text,
+                k=k,
+            )
+            for doc, _score in results:
+                self._enhance_document_with_citation(doc)
+                raw_metadata: dict[str, Any] | None = getattr(doc, "metadata", None)
+                if isinstance(raw_metadata, dict):
+                    doc.metadata = validate_metadata(raw_metadata)
+        except Exception:
+            logger.exception("Failed to similarity search vector store with scores")
             return []
         else:
             return results

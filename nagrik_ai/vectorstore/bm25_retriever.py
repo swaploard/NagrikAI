@@ -69,4 +69,7 @@ class BM25Retriever:
             key=lambda i: scores[i],
             reverse=True,
         )[:k]
-        return [self._documents[i] for i in top_indices]
+        results = [dict(self._documents[i]) for i in top_indices]
+        for i, index in enumerate(top_indices):
+            results[i]["score"] = float(scores[index])
+        return results

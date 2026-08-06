@@ -10,6 +10,7 @@ from nagrik_ai.models.rag_result import RAGResult, SourceInfo
 from nagrik_ai.prompts.prompt_loader import get_prompt_version, load_prompt
 from nagrik_ai.services.citation_service import (
     assign_citation_ids,
+    citation_sort_key,
     deduplicate_for_display,
     extract_snippet,
     flatten_doc,
@@ -86,12 +87,7 @@ def build_context_node(
         session_id=session_id,
         user_id=user_id,
     ) as span:
-
-        def get_score(doc: dict[str, Any]) -> float:
-            score = doc.get("score", 0.0)
-            return float(score) if isinstance(score, (int, float)) else 0.0
-
-        sorted_results = sorted(results, key=get_score, reverse=True)
+        sorted_results = sorted(results, key=citation_sort_key)
 
         all_sources: list[SourceInfo] = []
         for i, doc in enumerate(sorted_results, start=1):
@@ -169,9 +165,7 @@ def generate_node(
     context = state.get("context", "") or ""
     user_prompt = load_prompt("user_query", question=state["query"])
     combined = (
-        f"{system_prompt}\n\n## Context\n{context}\n\n{user_prompt}"
-        if context
-        else f"{system_prompt}\n\n{user_prompt}"
+        f"{system_prompt}\n\n## Context\n{context}\n\n{user_prompt}" if context else f"{system_prompt}\n\n{user_prompt}"
     )
     prompt_versions = {
         "system_prompt": get_prompt_version("system_prompt"),
@@ -215,9 +209,7 @@ def generate_stream_node(
     context = state.get("context", "") or ""
     user_prompt = load_prompt("user_query", question=state["query"])
     combined = (
-        f"{system_prompt}\n\n## Context\n{context}\n\n{user_prompt}"
-        if context
-        else f"{system_prompt}\n\n{user_prompt}"
+        f"{system_prompt}\n\n## Context\n{context}\n\n{user_prompt}" if context else f"{system_prompt}\n\n{user_prompt}"
     )
     prompt_versions = {
         "system_prompt": get_prompt_version("system_prompt"),

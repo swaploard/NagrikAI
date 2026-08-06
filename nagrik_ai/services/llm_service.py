@@ -18,6 +18,7 @@ from openai.types.chat import (
 
 from nagrik_ai.config.config_models import (
     LLM_PROVIDER,
+    MAX_RESPONSE_TOKENS,
     OLLAMA_BASE_URL,
     OLLAMA_MODEL,
     OPENROUTER_API_KEY,
@@ -514,10 +515,12 @@ def create_llm_service(
     model: str | None = None,
     api_key: str | None = None,
     temperature: float | None = None,
+    max_tokens: int | None = None,
 ) -> BaseLLMService:
     llm_kwargs: dict[str, Any] = {}
     if temperature is not None:
         llm_kwargs["temperature"] = temperature
+    llm_kwargs["max_tokens"] = max_tokens if max_tokens is not None else MAX_RESPONSE_TOKENS
     provider = provider or LLM_PROVIDER
     if provider == "openrouter":
         return OpenRouterLLMService(
