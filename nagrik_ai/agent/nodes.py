@@ -5,16 +5,21 @@ import re
 import time
 from typing import Any
 
+from nagrik_ai.agent.verbosity import (
+    QUESTION_TYPE_FACTUAL,
+    VERBOSITY_CONCISE,
+    classify_question_type,
+    classify_verbosity,
+)
 from nagrik_ai.models.agent_state import AgentState
 from nagrik_ai.models.rag_result import RAGResult, SourceInfo
 from nagrik_ai.prompts.prompt_loader import get_prompt_version, load_prompt
 from nagrik_ai.services.citation_service import (
-    assign_citation_ids,
     citation_sort_key,
-    deduplicate_for_display,
     extract_snippet,
     flatten_doc,
-    format_context_block,
+    format_merged_context_block,
+    source_group_key,
     validate_citations,
 )
 from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
@@ -23,6 +28,36 @@ from nagrik_ai.services.reranker import Reranker
 from nagrik_ai.services.tracing import LangSmithTracer, get_tracer
 
 logger = logging.getLogger(__name__)
+
+CONCISE_RESPONSE_WORD_CAP = 500
+
+
+def classify_node(
+    state: AgentState,
+    tracer: LangSmithTracer | None = None,
+    session_id: str | None = None,
+    user_id: str | None = None,
+) -> dict[str, Any]:
+    """Deterministically classify the query's verbosity and question type into metadata."""
+    _tracer = tracer or get_tracer()
+    query = state.get("query", "")
+    verbosity = classify_verbosity(query)
+    question_type = classify_question_type(query)
+    with _tracer.trace(
+        "classify_query",
+        "chain",
+        inputs={"query": query},
+        session_id=session_id,
+        user_id=user_id,
+    ) as span:
+        span.set_outputs({"verbosity": verbosity, "question_type": question_type})
+    return {
+        "metadata": {
+            **state.get("metadata", {}),
+            "verbosity": verbosity,
+            "question_type": question_type,
+        }
+    }
 
 
 def retrieve_node(
@@ -89,41 +124,40 @@ def build_context_node(
     ) as span:
         sorted_results = sorted(results, key=citation_sort_key)
 
-        all_sources: list[SourceInfo] = []
-        for i, doc in enumerate(sorted_results, start=1):
-            flat = flatten_doc(doc)
-            all_sources.append(
+        grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+        for doc in sorted_results:
+            group_key = source_group_key(flatten_doc(doc))
+            grouped.setdefault(group_key, []).append(doc)
+
+        display_sources: list[SourceInfo] = []
+        context_blocks: list[str] = []
+        locked_results: list[dict[str, Any]] = []
+        for i, (group_key, group_docs) in enumerate(grouped.items(), start=1):
+            first_flat = flatten_doc(group_docs[0])
+            display_sources.append(
                 SourceInfo(
-                    title=str(flat.get("title", "Unknown")),
-                    url=str(flat.get("url", "")),
-                    domain=str(flat.get("domain", "")),
-                    source_id=str(flat.get("source_id", "")),
+                    title=str(first_flat.get("title", "Unknown")),
+                    url=str(first_flat.get("url", "")),
+                    domain=str(first_flat.get("domain", "")),
+                    source_id=group_key[0],
                     citation_id=i,
-                    chunk_index=int(flat.get("chunk_index", 0)),
-                    total_chunks=int(flat.get("total_chunks", 1)),
-                    score=float(flat.get("score", 0.0)),
+                    chunk_index=int(first_flat.get("chunk_index", 0)),
+                    total_chunks=int(first_flat.get("total_chunks", 1)),
+                    score=float(first_flat.get("score", 0.0)),
                     snippet=extract_snippet(
-                        str(flat.get("page_content", flat.get("content", ""))),
+                        str(
+                            first_flat.get("page_content", first_flat.get("content", ""))
+                        ),
                         query,
                     ),
                 )
             )
+            context_blocks.append(format_merged_context_block([flatten_doc(d) for d in group_docs], i))
+            for doc in group_docs:
+                doc["citation_id"] = i
+                locked_results.append(doc)
 
-        display_sources = deduplicate_for_display(all_sources)
-        for i, s in enumerate(display_sources, start=1):
-            s.citation_id = i
-
-        context_blocks: list[str] = []
-        for i, s in enumerate(display_sources, start=1):
-            orig_doc = next(
-                doc
-                for doc in sorted_results
-                if flatten_doc(doc)["source_id"] == s.source_id and flatten_doc(doc)["chunk_index"] == s.chunk_index
-            )
-            context_blocks.append(format_context_block(flatten_doc(orig_doc), i))
         context = "\n\n---\n\n".join(context_blocks)
-
-        locked_results, _citation_map = assign_citation_ids(results)
 
         span.set_outputs({"context_length": len(context), "sources": len(display_sources)})
 
@@ -163,7 +197,13 @@ def generate_node(
 
     _tracer = tracer or get_tracer()
     context = state.get("context", "") or ""
-    user_prompt = load_prompt("user_query", question=state["query"])
+    metadata = state.get("metadata", {})
+    user_prompt = load_prompt(
+        "user_query",
+        question=state["query"],
+        verbosity=metadata.get("verbosity", VERBOSITY_CONCISE),
+        question_type=metadata.get("question_type", QUESTION_TYPE_FACTUAL),
+    )
     combined = (
         f"{system_prompt}\n\n## Context\n{context}\n\n{user_prompt}" if context else f"{system_prompt}\n\n{user_prompt}"
     )
@@ -176,7 +216,11 @@ def generate_node(
         "format_prompt",
         "prompt",
         inputs={"prompt": combined, "question": state["query"]},
-        metadata={"prompt_versions": prompt_versions},
+        metadata={
+            "prompt_versions": prompt_versions,
+            "verbosity": metadata.get("verbosity", VERBOSITY_CONCISE),
+            "question_type": metadata.get("question_type", QUESTION_TYPE_FACTUAL),
+        },
         session_id=session_id,
         user_id=user_id,
     ):
@@ -207,7 +251,13 @@ def generate_stream_node(
 
     _tracer = tracer or get_tracer()
     context = state.get("context", "") or ""
-    user_prompt = load_prompt("user_query", question=state["query"])
+    metadata = state.get("metadata", {})
+    user_prompt = load_prompt(
+        "user_query",
+        question=state["query"],
+        verbosity=metadata.get("verbosity", VERBOSITY_CONCISE),
+        question_type=metadata.get("question_type", QUESTION_TYPE_FACTUAL),
+    )
     combined = (
         f"{system_prompt}\n\n## Context\n{context}\n\n{user_prompt}" if context else f"{system_prompt}\n\n{user_prompt}"
     )
@@ -220,7 +270,11 @@ def generate_stream_node(
         "format_prompt",
         "prompt",
         inputs={"prompt": combined, "question": state["query"]},
-        metadata={"prompt_versions": prompt_versions},
+        metadata={
+            "prompt_versions": prompt_versions,
+            "verbosity": metadata.get("verbosity", VERBOSITY_CONCISE),
+            "question_type": metadata.get("question_type", QUESTION_TYPE_FACTUAL),
+        },
         session_id=session_id,
         user_id=user_id,
     ):
@@ -327,6 +381,20 @@ def validate_node(
                 source_block += f"[{s.citation_id}] {s.title} - {s.url}\n"
             response_text += source_block
 
+        verbosity = state.get("metadata", {}).get("verbosity", VERBOSITY_CONCISE)
+        response_word_count = len(body.split())
+        length_warning = verbosity == VERBOSITY_CONCISE and response_word_count > CONCISE_RESPONSE_WORD_CAP
+        metadata = dict(state.get("metadata", {}))
+        if length_warning:
+            logger.warning(
+                "Concise query answered with %d words (cap %d) — downgrading confidence",
+                response_word_count,
+                CONCISE_RESPONSE_WORD_CAP,
+            )
+            confidence = min(confidence, 0.5)
+            metadata["length_warning"] = True
+        metadata["response_word_count"] = response_word_count
+
         citations_valid = len(errors) == 0
         span.set_outputs(
             {
@@ -334,6 +402,8 @@ def validate_node(
                 "confidence": confidence,
                 "errors": errors,
                 "cited_ids_in_response": cited_ids_in_response,
+                "response_word_count": response_word_count,
+                "length_warning": length_warning,
             }
         )
 
@@ -342,6 +412,7 @@ def validate_node(
         "citations_valid": citations_valid,
         "errors": errors,
         "answer": response_text,
+        "metadata": metadata,
     }
 
 

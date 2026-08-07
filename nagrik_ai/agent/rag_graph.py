@@ -10,6 +10,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from nagrik_ai.agent.nodes import (
     build_context_node,
+    classify_node,
     finalize_node,
     generate_node,
     generate_stream_node,
@@ -83,6 +84,11 @@ def create_rag_graph(
         context_schema=None,
     )
 
+    def wrapped_classify(state: AgentState) -> dict[str, Any]:
+        return classify_node(
+            state, tracer=_tracer, session_id=state.get("session_id"), user_id=state.get("user_id")
+        )
+
     def wrapped_retrieve(state: AgentState) -> dict[str, Any]:
         return retrieve_node(
             state, retrieval_service, tracer=_tracer, session_id=state.get("session_id"), user_id=state.get("user_id")
@@ -147,6 +153,7 @@ def create_rag_graph(
             )
             return {"answer": synthesized, "errors": []}
 
+    workflow.add_node("classify", wrapped_classify)  # pyright: ignore[reportUnknownMemberType]
     workflow.add_node("retrieve", wrapped_retrieve)  # pyright: ignore[reportUnknownMemberType]
     workflow.add_node("rerank", wrapped_rerank)  # pyright: ignore[reportUnknownMemberType]
     workflow.add_node("build_context", wrapped_build_context)  # pyright: ignore[reportUnknownMemberType]
@@ -175,7 +182,8 @@ def create_rag_graph(
 
         workflow.add_node("retry_generate", _retry_generate)  # pyright: ignore[reportUnknownMemberType]
 
-    workflow.set_entry_point("retrieve")
+    workflow.set_entry_point("classify")
+    workflow.add_edge("classify", "retrieve")
     workflow.add_edge("retrieve", "rerank")
     workflow.add_edge("rerank", "build_context")
     workflow.add_edge("build_context", generate_node_name)

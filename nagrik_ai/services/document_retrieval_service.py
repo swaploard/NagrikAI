@@ -18,6 +18,8 @@ from nagrik_ai.vectorstore.chroma_store import ChromaStore, validate_metadata
 
 logger = logging.getLogger(__name__)
 
+AUTHORITATIVE_SOURCE_TYPES: frozenset[str] = frozenset({"act", "rules", "notification"})
+
 
 def get_score(doc: Document | dict[str, Any]) -> float:
     """Safely extract score from various retriever output formats.
@@ -82,6 +84,46 @@ def _extract_doc_metadata(doc: dict[str, Any]) -> dict[str, Any]:
         "score": flat["score"],
         "source_type": classify_source_type(doc.get("metadata", {})),
         "authority_score": float(doc.get("authority_score", 0.0)),
+    }
+
+
+def is_authoritative_doc(doc: dict[str, Any]) -> bool:
+    """True when a retrieved doc is an Act, Rules, or Notification chunk."""
+    return classify_source_type(doc.get("metadata", {})) in AUTHORITATIVE_SOURCE_TYPES
+
+
+def authority_atk(docs: list[dict[str, Any]], k: int | None = None) -> float:
+    """Authority@k: proportion of the first k retrieved chunks from Acts/Rules/Notifications.
+
+    ``k`` defaults to the full list length. Returns 0.0 for an empty result list.
+    """
+    if not docs:
+        return 0.0
+    top = docs[:k] if k is not None else docs
+    if not top:
+        return 0.0
+    return sum(1 for doc in top if is_authoritative_doc(doc)) / len(top)
+
+
+def first_authoritative_rank(docs: list[dict[str, Any]]) -> int | None:
+    """Position (1-based) of the first authoritative source; None when none exists."""
+    for rank, doc in enumerate(docs, start=1):
+        if is_authoritative_doc(doc):
+            return rank
+    return None
+
+
+def retrieval_metrics(docs: list[dict[str, Any]]) -> dict[str, Any]:
+    """Deterministic retrieval-quality metrics over the final result list."""
+    authoritative_count = sum(1 for doc in docs if is_authoritative_doc(doc))
+    return {
+        "authority_at_top_k": authority_atk(docs),
+        "authority_at_1": authority_atk(docs, k=1),
+        "authority_at_3": authority_atk(docs, k=3),
+        "authority_at_5": authority_atk(docs, k=5),
+        "first_authoritative_rank": first_authoritative_rank(docs),
+        "num_authoritative": authoritative_count,
+        "total": len(docs),
     }
 
 
@@ -285,12 +327,14 @@ class DocumentRetrievalService:
             logger.info("Retrieved %d documents", len(result))
             _log_retrieved_docs(result)
             latency = span.elapsed_ms()
+            metrics = retrieval_metrics(result)
             span.set_outputs(
                 {
                     "num_results": len(result),
                     "strategy": strategy,
                     "latency_ms": latency,
                     "documents": [_extract_doc_metadata(d) for d in result],
+                    "metrics": metrics,
                 }
             )
             return result

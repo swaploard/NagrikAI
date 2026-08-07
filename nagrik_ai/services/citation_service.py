@@ -17,9 +17,10 @@ def normalize_url(url: str) -> str:
 def flatten_doc(doc: dict[str, Any]) -> dict[str, Any]:
     """Flatten nested metadata into top-level keys for citation formatting."""
     metadata = doc.get("metadata", {})
+    content = doc.get("content", doc.get("page_content", ""))
     return {
-        "content": doc.get("content", ""),
-        "page_content": doc.get("content", ""),
+        "content": content,
+        "page_content": content,
         "source_id": metadata.get("source_id", metadata.get("source", "unknown")),
         "title": metadata.get("title", "Unknown"),
         "url": metadata.get("citation_url", metadata.get("url", "unknown")),
@@ -90,6 +91,45 @@ def format_context_block(doc: dict[str, object], index: int) -> str:
         f"Domain: {doc.get('domain', '')}\n\n"
         f"Content:\n{doc.get('page_content', doc.get('content', ''))}"
     )
+
+
+def source_group_key(flat: dict[str, Any]) -> tuple[str, str, str]:
+    """Identity of a source file: (source_id, normalized_url, title).
+
+    All chunks of the same source file share this key, so citing the file once is enough.
+    """
+    return (
+        str(flat.get("source_id", "")),
+        normalize_url(str(flat.get("url", ""))),
+        str(flat.get("title", "")),
+    )
+
+
+def format_merged_context_block(docs: list[dict[str, Any]], index: int) -> str:
+    """Format every chunk of one source under a single merged context block.
+
+    The model reasons far better over grouped evidence: a source appears once with all of
+    its chunks, instead of one sparse ``[i] Chunk`` block per retrieved chunk.
+    """
+    if not docs:
+        return ""
+    first = docs[0]
+    chunks_by_index = sorted(
+        docs,
+        key=lambda doc: int(doc.get("chunk_index", 0)),
+    )
+    lines = [
+        f"[{index}]",
+        f"Source ID: {first.get('source_id', '')}",
+        f"Title: {first.get('title', '')}",
+        f"URL: {first.get('url', '')}",
+        f"Domain: {first.get('domain', '')}",
+    ]
+    for chunk in chunks_by_index:
+        chunk_index = int(chunk.get("chunk_index", 0))
+        content: str = str(chunk.get("page_content", chunk.get("content", "")))
+        lines.append(f"Chunk {chunk_index}:\n{content}")
+    return "\n".join(lines)
 
 
 def validate_citations(response: str, sources: list[SourceInfo]) -> bool:
