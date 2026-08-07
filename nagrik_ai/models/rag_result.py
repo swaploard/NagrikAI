@@ -32,3 +32,4 @@ class RAGResult:
     latency_ms: float  # performance tracking
     total_chunks_retrieved: int = 0
     citations_valid: bool = True  # populated by validate_citations()
+    truncated: bool = False  # True when the LLM hit its max-token cap (finish_reason == "length")

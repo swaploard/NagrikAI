@@ -102,6 +102,11 @@ def _build_streaming_ui() -> gr.Blocks:
                         else _format_sources(result.sources)
                     )
                     clickable_response = make_citations_clickable(result.response, result.sources)
+                    if result.truncated:
+                        clickable_response += (
+                            "\n\n> ⚠️ Response was cut short by the model's token limit. "
+                            "Ask in a more focused way or retry."
+                        )
                     assistant_response = clickable_response
                     current_history = chat_history.copy()
                     current_history.append({"role": "assistant", "content": clickable_response})

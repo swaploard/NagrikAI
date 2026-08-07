@@ -54,6 +54,8 @@ class ConfigManager:
             "rrf_k": "NAGRIKAI_RRF_K",
             "authority_ranking_enabled": "NAGRIKAI_AUTHORITY_RANKING_ENABLED",
             "max_response_tokens": "NAGRIKAI_MAX_RESPONSE_TOKENS",
+            "max_response_tokens_detailed": "NAGRIKAI_MAX_RESPONSE_TOKENS_DETAILED",
+            "max_response_tokens_hard": "NAGRIKAI_MAX_RESPONSE_TOKENS_HARD",
         }
 
         for key, env_var in env_mappings.items():
@@ -77,7 +79,16 @@ class ConfigManager:
         return raw
 
     def _convert_value(self, key: str, value: str) -> str | int | float | bool:
-        if key in {"chunk_size", "chunk_overlap", "top_k", "fetch_k", "rrf_k", "max_response_tokens"}:
+        if key in {
+            "chunk_size",
+            "chunk_overlap",
+            "top_k",
+            "fetch_k",
+            "rrf_k",
+            "max_response_tokens",
+            "max_response_tokens_detailed",
+            "max_response_tokens_hard",
+        }:
             return int(value)
         if key in {"lambda_mult", "bm25_k1", "bm25_b"}:
             return float(value)

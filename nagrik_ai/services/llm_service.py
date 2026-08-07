@@ -75,13 +75,18 @@ class BaseLLMService(ABC):
         self.tracer: LangSmithTracer = tracer or get_tracer()
         self.temperature = temperature
         self.max_tokens = max_tokens
+        #: finish_reason of the most recent call ("stop", "length", ...). Used to
+        #: detect responses truncated by the provider's max-token cap.
+        self.last_finish_reason: str | None = None
 
     @abstractmethod
-    def generate(self, prompt: str, system: str | None = None) -> str:
+    def generate(self, prompt: str, system: str | None = None, max_tokens: int | None = None) -> str:
         pass
 
     @abstractmethod
-    def generate_stream(self, prompt: str, system: str | None = None) -> Iterator[str]:
+    def generate_stream(
+        self, prompt: str, system: str | None = None, max_tokens: int | None = None
+    ) -> Iterator[str]:
         pass
 
     @abstractmethod
@@ -109,18 +114,19 @@ class OllamaLLMService(BaseLLMService):
         self.model = model
         logger.info("Initialized Ollama LLM service with model: %s", model)
 
-    def _build_options(self, system: str | None = None) -> dict[str, Any]:
+    def _build_options(self, system: str | None = None, max_tokens: int | None = None) -> dict[str, Any]:
         options: dict[str, Any] = {}
         if system:
             options["system"] = system
         if self.temperature is not None:
             options["temperature"] = self.temperature
-        if self.max_tokens is not None:
-            options["num_predict"] = self.max_tokens
+        effective_max_tokens = max_tokens if max_tokens is not None else self.max_tokens
+        if effective_max_tokens is not None:
+            options["num_predict"] = effective_max_tokens
         return options
 
-    def generate(self, prompt: str, system: str | None = None) -> str:
-        options = self._build_options(system)
+    def generate(self, prompt: str, system: str | None = None, max_tokens: int | None = None) -> str:
+        options = self._build_options(system, max_tokens)
         logger.info("About to call Ollama generate (model: %s)", self.model)
         with self.tracer.trace(
             "ollama_generate",
@@ -152,14 +158,17 @@ class OllamaLLMService(BaseLLMService):
                 outputs["token_usage"] = token_usage
             if response.done_reason:
                 outputs["finish_reason"] = response.done_reason
+            self.last_finish_reason = response.done_reason or None
             if response.total_duration:
                 duration_ms = response.total_duration / 1_000_000
                 outputs["total_duration_ms"] = duration_ms
             span.set_outputs(outputs)
             return result
 
-    def generate_stream(self, prompt: str, system: str | None = None) -> Iterator[str]:
-        options = self._build_options(system)
+    def generate_stream(
+        self, prompt: str, system: str | None = None, max_tokens: int | None = None
+    ) -> Iterator[str]:
+        options = self._build_options(system, max_tokens)
         logger.info("About to call Ollama generate with stream (model: %s)", self.model)
         with self.tracer.trace(
             "ollama_generate_stream",
@@ -204,6 +213,7 @@ class OllamaLLMService(BaseLLMService):
                 outputs["token_usage"] = token_usage
             if final_meta.get("done_reason"):
                 outputs["finish_reason"] = final_meta["done_reason"]
+            self.last_finish_reason = final_meta.get("done_reason")
             td = final_meta.get("total_duration")
             if td:
                 outputs["total_duration_ms"] = td / 1_000_000
@@ -276,6 +286,7 @@ class OllamaLLMService(BaseLLMService):
             }
             if message.content is not None:
                 outputs["response_length"] = len(message.content)
+            self.last_finish_reason = getattr(response, "done_reason", None) or None
             span.set_outputs(outputs)
 
             return LLMResponse(content=message.content, tool_calls=tool_calls)
@@ -325,11 +336,12 @@ class OpenRouterLLMService(BaseLLMService):
             ) from e
         raise LLMError(f"OpenRouter API error: {e}") from e
 
-    def generate(self, prompt: str, system: str | None = None) -> str:
+    def generate(self, prompt: str, system: str | None = None, max_tokens: int | None = None) -> str:
         messages: list[ChatCompletionMessageParam] = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
+        effective_max_tokens = max_tokens if max_tokens is not None else self.max_tokens
         logger.info("About to call OpenRouter chat.completions (model: %s)", self.model)
         try:
             with self.tracer.trace(
@@ -340,7 +352,7 @@ class OpenRouterLLMService(BaseLLMService):
                     "model": self.model,
                     "provider": "openrouter",
                     "temperature": self.temperature,
-                    "max_tokens": self.max_tokens,
+                    "max_tokens": effective_max_tokens,
                 },
             ) as span:
                 span.start_timer()
@@ -348,7 +360,7 @@ class OpenRouterLLMService(BaseLLMService):
                     model=self.model,
                     messages=messages,
                     temperature=self.temperature,
-                    max_tokens=self.max_tokens,
+                    max_tokens=effective_max_tokens,
                 )
                 result = response.choices[0].message.content or ""
                 latency = span.elapsed_ms()
@@ -367,16 +379,22 @@ class OpenRouterLLMService(BaseLLMService):
                         outputs["token_usage"] = token_usage
                 if response.choices and response.choices[0].finish_reason:
                     outputs["finish_reason"] = response.choices[0].finish_reason
+                self.last_finish_reason = (
+                    response.choices[0].finish_reason if response.choices else None
+                )
                 span.set_outputs(outputs)
                 return result
         except Exception as e:
             self._handle_error(e)
 
-    def generate_stream(self, prompt: str, system: str | None = None) -> Iterator[str]:
+    def generate_stream(
+        self, prompt: str, system: str | None = None, max_tokens: int | None = None
+    ) -> Iterator[str]:
         messages: list[ChatCompletionMessageParam] = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
+        effective_max_tokens = max_tokens if max_tokens is not None else self.max_tokens
         span = None
         logger.info("About to call OpenRouter chat.completions with streaming (model: %s)", self.model)
         try:
@@ -389,7 +407,7 @@ class OpenRouterLLMService(BaseLLMService):
                     "provider": "openrouter",
                     "streaming": True,
                     "temperature": self.temperature,
-                    "max_tokens": self.max_tokens,
+                    "max_tokens": effective_max_tokens,
                 },
             ) as span:
                 span.start_timer()
@@ -397,7 +415,7 @@ class OpenRouterLLMService(BaseLLMService):
                     model=self.model,
                     messages=messages,
                     temperature=self.temperature,
-                    max_tokens=self.max_tokens,
+                    max_tokens=effective_max_tokens,
                     stream=True,
                     stream_options={"include_usage": True},
                 )
@@ -425,6 +443,7 @@ class OpenRouterLLMService(BaseLLMService):
                     outputs["token_usage"] = usage_data
                 if finish_reason:
                     outputs["finish_reason"] = finish_reason
+                self.last_finish_reason = finish_reason
                 span.set_outputs(outputs)
         except Exception as e:
             if span is not None:
@@ -502,6 +521,9 @@ class OpenRouterLLMService(BaseLLMService):
                         "total": usage.total_tokens,
                     }
                     outputs["token_usage"] = token_usage
+                self.last_finish_reason = (
+                    response.choices[0].finish_reason if response.choices else None
+                )
                 span.set_outputs(outputs)
 
                 return LLMResponse(content=message.content, tool_calls=tool_calls)

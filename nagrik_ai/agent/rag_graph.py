@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, cast
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
@@ -166,20 +166,21 @@ def create_rag_graph(
     if enable_fallback:
         workflow.add_node("web_search_fallback", web_search_fallback_node)  # pyright: ignore[reportUnknownMemberType]
 
-    if enable_self_correction:
-        _generate_fn = wrapped_generate_stream if enable_streaming else wrapped_generate
+    _generate_fn = wrapped_generate_stream if enable_streaming else wrapped_generate
 
-        def _retry_generate(state: AgentState) -> dict[str, Any]:
-            metadata = dict(state.get("metadata", {}))
-            metadata["retry_count"] = metadata.get("retry_count", 0) + 1
-            result = _generate_fn(state)
-            result["metadata"] = {
-                **state.get("metadata", {}),
-                **result.get("metadata", {}),
-                "retry_count": metadata["retry_count"],
-            }
-            return result
+    def _retry_generate(state: AgentState) -> dict[str, Any]:
+        metadata = dict(state.get("metadata", {}))
+        metadata["retry_count"] = metadata.get("retry_count", 0) + 1
+        retry_state = cast(AgentState, {**state, "_streaming_buffer": [], "metadata": metadata})
+        result = _generate_fn(retry_state)
+        result["metadata"] = {
+            **state.get("metadata", {}),
+            **result.get("metadata", {}),
+            "retry_count": metadata["retry_count"],
+        }
+        return result
 
+    if enable_self_correction or enable_fallback:
         workflow.add_node("retry_generate", _retry_generate)  # pyright: ignore[reportUnknownMemberType]
 
     workflow.set_entry_point("classify")
@@ -195,7 +196,13 @@ def create_rag_graph(
             answer = state.get("answer", "") or ""
             retry_count = state.get("metadata", {}).get("retry_count", 0)
             citations_valid = state.get("citations_valid", False)
-            if not citations_valid and retry_count < max_retries and answer and "llm_service is required" not in answer:
+            truncated = state.get("metadata", {}).get("truncated", False)
+            if (
+                (not citations_valid or truncated)
+                and retry_count < max_retries
+                and answer
+                and "llm_service is required" not in answer
+            ):
                 return "retry"
             return "finalize"
         workflow.add_conditional_edges(
@@ -209,6 +216,10 @@ def create_rag_graph(
             citations = state.get("citations", [])
             citations_valid = state.get("citations_valid", True)
             confidence = state.get("confidence", 1.0)
+            retry_count = state.get("metadata", {}).get("retry_count", 0)
+            truncated = state.get("metadata", {}).get("truncated", False)
+            if truncated and retry_count < max_retries:
+                return "retry"
             if not citations:
                 return "fallback"
             if not citations_valid or (confidence is not None and confidence < 0.5):
@@ -217,8 +228,9 @@ def create_rag_graph(
         workflow.add_conditional_edges(
             "validate",
             should_fallback,
-            {"fallback": "web_search_fallback", "finalize": "finalize"},
+            {"retry": "retry_generate", "fallback": "web_search_fallback", "finalize": "finalize"},
         )
+        workflow.add_edge("retry_generate", "validate")
         workflow.add_edge("web_search_fallback", "finalize")
     else:
         workflow.add_edge("validate", "finalize")
@@ -317,7 +329,7 @@ def stream_rag_query(
         node_name = next(iter(chunk.keys()))
         node_output = chunk[node_name]
 
-        if node_name == "generate_stream" and "_streaming_buffer" in node_output:
+        if node_name in {"generate_stream", "retry_generate"} and "_streaming_buffer" in node_output:
             for token in node_output["_streaming_buffer"]:
                 yield {"type": "token", "content": token}
 

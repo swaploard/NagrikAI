@@ -8,8 +8,14 @@ from typing import Any
 from nagrik_ai.agent.verbosity import (
     QUESTION_TYPE_FACTUAL,
     VERBOSITY_CONCISE,
+    VERBOSITY_DETAILED,
     classify_question_type,
     classify_verbosity,
+)
+from nagrik_ai.config.config_models import (
+    MAX_RESPONSE_TOKENS,
+    MAX_RESPONSE_TOKENS_DETAILED,
+    MAX_RESPONSE_TOKENS_HARD,
 )
 from nagrik_ai.models.agent_state import AgentState
 from nagrik_ai.models.rag_result import RAGResult, SourceInfo
@@ -30,6 +36,20 @@ from nagrik_ai.services.tracing import LangSmithTracer, get_tracer
 logger = logging.getLogger(__name__)
 
 CONCISE_RESPONSE_WORD_CAP = 500
+
+
+def response_token_budget(metadata: dict[str, Any]) -> int:
+    """Token budget for the next generation, scaled by verbosity and retry count.
+
+    Concise queries get the base budget, detailed queries get a larger one, and every
+    retry doubles the budget (bounded by the hard ceiling set in configuration).
+    """
+    verbosity = str(metadata.get("verbosity", VERBOSITY_CONCISE))
+    base = int(MAX_RESPONSE_TOKENS_DETAILED if verbosity == VERBOSITY_DETAILED else MAX_RESPONSE_TOKENS)
+    raw_retry = metadata.get("retry_count")
+    retries = int(raw_retry) if isinstance(raw_retry, (int, float, str)) else 0
+    ceiling = int(MAX_RESPONSE_TOKENS_HARD)
+    return min(int(base * (2**retries)), ceiling)
 
 
 def classify_node(
@@ -211,6 +231,7 @@ def generate_node(
         "system_prompt": get_prompt_version("system_prompt"),
         "user_query": get_prompt_version("user_query"),
     }
+    max_tokens = response_token_budget(metadata)
 
     with _tracer.trace(
         "format_prompt",
@@ -220,17 +241,24 @@ def generate_node(
             "prompt_versions": prompt_versions,
             "verbosity": metadata.get("verbosity", VERBOSITY_CONCISE),
             "question_type": metadata.get("question_type", QUESTION_TYPE_FACTUAL),
+            "max_tokens": max_tokens,
         },
         session_id=session_id,
         user_id=user_id,
     ):
         pass
 
-    response = llm_service.generate(combined, system=None)
-    logger.info("generate_node: LLM response=%s...", response[:200])
+    response = llm_service.generate(combined, system=None, max_tokens=max_tokens)
+    finish_reason = getattr(llm_service, "last_finish_reason", None)
+    logger.info("generate_node: LLM response=%s... (finish_reason=%s)", response[:200], finish_reason)
     return {
         "answer": response,
         "candidate_answers": [response],
+        "metadata": {
+            **dict(state.get("metadata", {})),
+            "finish_reason": finish_reason or "",
+            "max_tokens": max_tokens,
+        },
     }
 
 
@@ -265,6 +293,7 @@ def generate_stream_node(
         "system_prompt": get_prompt_version("system_prompt"),
         "user_query": get_prompt_version("user_query"),
     }
+    max_tokens = response_token_budget(metadata)
 
     with _tracer.trace(
         "format_prompt",
@@ -274,6 +303,7 @@ def generate_stream_node(
             "prompt_versions": prompt_versions,
             "verbosity": metadata.get("verbosity", VERBOSITY_CONCISE),
             "question_type": metadata.get("question_type", QUESTION_TYPE_FACTUAL),
+            "max_tokens": max_tokens,
         },
         session_id=session_id,
         user_id=user_id,
@@ -288,7 +318,7 @@ def generate_stream_node(
     with _tracer.trace(
         "generate_stream", "llm", inputs={"query": state["query"]}, session_id=session_id, user_id=user_id
     ) as span:
-        for chunk in llm_service.generate_stream(combined, system=None):
+        for chunk in llm_service.generate_stream(combined, system=None, max_tokens=max_tokens):
             full_response += chunk
             streaming_buffer.append(chunk)
             if streaming_callback is not None:
@@ -301,6 +331,11 @@ def generate_stream_node(
         "answer": full_response,
         "candidate_answers": [full_response],
         "_streaming_buffer": streaming_buffer,
+        "metadata": {
+            **dict(state.get("metadata", {})),
+            "finish_reason": getattr(llm_service, "last_finish_reason", None) or "",
+            "max_tokens": max_tokens,
+        },
     }
 
 
@@ -384,6 +419,7 @@ def validate_node(
         verbosity = state.get("metadata", {}).get("verbosity", VERBOSITY_CONCISE)
         response_word_count = len(body.split())
         length_warning = verbosity == VERBOSITY_CONCISE and response_word_count > CONCISE_RESPONSE_WORD_CAP
+        truncated = state.get("metadata", {}).get("finish_reason") == "length"
         metadata = dict(state.get("metadata", {}))
         if length_warning:
             logger.warning(
@@ -393,6 +429,9 @@ def validate_node(
             )
             confidence = min(confidence, 0.5)
             metadata["length_warning"] = True
+        if truncated:
+            logger.warning("LLM response truncated by token cap (finish_reason=length)")
+        metadata["truncated"] = truncated
         metadata["response_word_count"] = response_word_count
 
         citations_valid = len(errors) == 0
@@ -404,6 +443,7 @@ def validate_node(
                 "cited_ids_in_response": cited_ids_in_response,
                 "response_word_count": response_word_count,
                 "length_warning": length_warning,
+                "truncated": truncated,
             }
         )
 
@@ -473,6 +513,7 @@ def finalize_node(
             latency_ms=latency_ms,
             total_chunks_retrieved=len(state.get("documents", [])),
             citations_valid=citations_valid,
+            truncated=state.get("metadata", {}).get("finish_reason") == "length",
         )
 
         logger.info(
