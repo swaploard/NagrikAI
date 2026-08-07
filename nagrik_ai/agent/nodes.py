@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import time
 from typing import Any
 
+from nagrik_ai.agent.validation import CONCISE_RESPONSE_WORD_CAP, ValidationStatus, validate_response
 from nagrik_ai.agent.verbosity import (
     QUESTION_TYPE_FACTUAL,
     VERBOSITY_CONCISE,
@@ -20,13 +22,13 @@ from nagrik_ai.config.config_models import (
 from nagrik_ai.models.agent_state import AgentState
 from nagrik_ai.models.rag_result import RAGResult, SourceInfo
 from nagrik_ai.prompts.prompt_loader import get_prompt_version, load_prompt
+from nagrik_ai.prompts.prompt_registry import CompiledPromptPipeline, load_default_prompt_pipeline
 from nagrik_ai.services.citation_service import (
     citation_sort_key,
     extract_snippet,
     flatten_doc,
     format_merged_context_block,
     source_group_key,
-    validate_citations,
 )
 from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
 from nagrik_ai.services.llm_service import BaseLLMService
@@ -35,7 +37,7 @@ from nagrik_ai.services.tracing import LangSmithTracer, get_tracer
 
 logger = logging.getLogger(__name__)
 
-CONCISE_RESPONSE_WORD_CAP = 500
+NO_RETRIEVAL_RESPONSE = "No authoritative source was found in the retrieved documents."
 
 
 def response_token_budget(metadata: dict[str, Any]) -> int:
@@ -165,9 +167,7 @@ def build_context_node(
                     total_chunks=int(first_flat.get("total_chunks", 1)),
                     score=float(first_flat.get("score", 0.0)),
                     snippet=extract_snippet(
-                        str(
-                            first_flat.get("page_content", first_flat.get("content", ""))
-                        ),
+                        str(first_flat.get("page_content", first_flat.get("content", ""))),
                         query,
                     ),
                 )
@@ -178,6 +178,21 @@ def build_context_node(
                 locked_results.append(doc)
 
         context = "\n\n---\n\n".join(context_blocks)
+        retrieval_fingerprint = {
+            "context_hash": hashlib.sha256(context.encode("utf-8")).hexdigest()[:12],
+            "retriever": state.get("retrieval_config", {}).get("retriever", "configured"),
+            "top_k": state.get("retrieval_config", {}).get("top_k"),
+            "filters": state.get("retrieval_config", {}).get("filters", {}),
+            "documents": [
+                {
+                    "source_id": src.source_id,
+                    "citation_id": src.citation_id,
+                    "chunk_index": src.chunk_index,
+                    "score": src.score,
+                }
+                for src in display_sources
+            ],
+        }
 
         span.set_outputs({"context_length": len(context), "sources": len(display_sources)})
 
@@ -198,6 +213,54 @@ def build_context_node(
             for src in display_sources
         ],
         "documents": locked_results,
+        "metadata": {
+            **state.get("metadata", {}),
+            "retrieval_fingerprint": retrieval_fingerprint,
+        },
+    }
+
+
+def _render_generation_prompt(
+    state: AgentState,
+    *,
+    system_prompt: str,
+    compiled_pipeline: CompiledPromptPipeline | None,
+) -> tuple[str, dict[str, Any]]:
+    context = state.get("context", "") or ""
+    metadata = state.get("metadata", {})
+    verbosity = metadata.get("verbosity", VERBOSITY_CONCISE)
+    question_type = metadata.get("question_type", QUESTION_TYPE_FACTUAL)
+
+    if system_prompt:
+        user_prompt = load_prompt(
+            "user_query",
+            question=state["query"],
+            verbosity=verbosity,
+            question_type=question_type,
+        )
+        combined = (
+            f"{system_prompt}\n\n## Context\n{context}\n\n{user_prompt}"
+            if context
+            else f"{system_prompt}\n\n{user_prompt}"
+        )
+        return combined, {
+            "prompt_versions": {
+                "system_prompt": get_prompt_version("system_prompt"),
+                "user_query": get_prompt_version("user_query"),
+            }
+        }
+
+    pipeline = compiled_pipeline or load_default_prompt_pipeline()
+    rendered = pipeline.render(
+        context=context,
+        question=state["query"],
+        verbosity=str(verbosity),
+        question_type=str(question_type),
+    )
+    return rendered.text, {
+        "pipeline_id": rendered.pipeline_id,
+        "pipeline_version": rendered.pipeline_version,
+        "prompt_content_hash": rendered.prompt_content_hash,
     }
 
 
@@ -205,6 +268,7 @@ def generate_node(
     state: AgentState,
     llm_service: BaseLLMService | None,
     system_prompt: str = "",
+    compiled_pipeline: CompiledPromptPipeline | None = None,
     tracer: LangSmithTracer | None = None,
     session_id: str | None = None,
     user_id: str | None = None,
@@ -212,25 +276,26 @@ def generate_node(
     if llm_service is None:
         error_msg = "llm_service is required for generate_node"
         return {"answer": error_msg, "errors": [error_msg], "candidate_answers": []}
-    if not system_prompt:
-        system_prompt = load_prompt("system_prompt")
 
     _tracer = tracer or get_tracer()
-    context = state.get("context", "") or ""
     metadata = state.get("metadata", {})
-    user_prompt = load_prompt(
-        "user_query",
-        question=state["query"],
-        verbosity=metadata.get("verbosity", VERBOSITY_CONCISE),
-        question_type=metadata.get("question_type", QUESTION_TYPE_FACTUAL),
+    if metadata.get("retrieved_count") == 0:
+        return {
+            "answer": NO_RETRIEVAL_RESPONSE,
+            "candidate_answers": [NO_RETRIEVAL_RESPONSE],
+            "metadata": {
+                **dict(metadata),
+                "no_answer_reason": "no_retrieval",
+                "validation_status": ValidationStatus.FAIL.value,
+                "validation_retryable": False,
+            },
+        }
+
+    combined, prompt_metadata = _render_generation_prompt(
+        state,
+        system_prompt=system_prompt,
+        compiled_pipeline=compiled_pipeline,
     )
-    combined = (
-        f"{system_prompt}\n\n## Context\n{context}\n\n{user_prompt}" if context else f"{system_prompt}\n\n{user_prompt}"
-    )
-    prompt_versions = {
-        "system_prompt": get_prompt_version("system_prompt"),
-        "user_query": get_prompt_version("user_query"),
-    }
     max_tokens = response_token_budget(metadata)
 
     with _tracer.trace(
@@ -238,7 +303,8 @@ def generate_node(
         "prompt",
         inputs={"prompt": combined, "question": state["query"]},
         metadata={
-            "prompt_versions": prompt_versions,
+            **prompt_metadata,
+            "retrieval_fingerprint": metadata.get("retrieval_fingerprint", {}),
             "verbosity": metadata.get("verbosity", VERBOSITY_CONCISE),
             "question_type": metadata.get("question_type", QUESTION_TYPE_FACTUAL),
             "max_tokens": max_tokens,
@@ -256,6 +322,7 @@ def generate_node(
         "candidate_answers": [response],
         "metadata": {
             **dict(state.get("metadata", {})),
+            **prompt_metadata,
             "finish_reason": finish_reason or "",
             "max_tokens": max_tokens,
         },
@@ -266,6 +333,7 @@ def generate_stream_node(
     state: AgentState,
     llm_service: BaseLLMService | None,
     system_prompt: str = "",
+    compiled_pipeline: CompiledPromptPipeline | None = None,
     tracer: LangSmithTracer | None = None,
     session_id: str | None = None,
     user_id: str | None = None,
@@ -274,25 +342,35 @@ def generate_stream_node(
     if llm_service is None:
         error_msg = "llm_service is required for generate_stream_node"
         return {"answer": error_msg, "errors": [error_msg], "candidate_answers": []}
-    if not system_prompt:
-        system_prompt = load_prompt("system_prompt")
 
     _tracer = tracer or get_tracer()
-    context = state.get("context", "") or ""
     metadata = state.get("metadata", {})
-    user_prompt = load_prompt(
-        "user_query",
-        question=state["query"],
-        verbosity=metadata.get("verbosity", VERBOSITY_CONCISE),
-        question_type=metadata.get("question_type", QUESTION_TYPE_FACTUAL),
+    streaming_buffer = state.get("_streaming_buffer") or []
+    streaming_callback = state.get("_streaming_callback")
+
+    if metadata.get("retrieved_count") == 0:
+        for token in NO_RETRIEVAL_RESPONSE.split(" "):
+            chunk = token + " "
+            streaming_buffer.append(chunk)
+            if streaming_callback is not None:
+                streaming_callback(chunk)
+        return {
+            "answer": NO_RETRIEVAL_RESPONSE,
+            "candidate_answers": [NO_RETRIEVAL_RESPONSE],
+            "_streaming_buffer": streaming_buffer,
+            "metadata": {
+                **dict(metadata),
+                "no_answer_reason": "no_retrieval",
+                "validation_status": ValidationStatus.FAIL.value,
+                "validation_retryable": False,
+            },
+        }
+
+    combined, prompt_metadata = _render_generation_prompt(
+        state,
+        system_prompt=system_prompt,
+        compiled_pipeline=compiled_pipeline,
     )
-    combined = (
-        f"{system_prompt}\n\n## Context\n{context}\n\n{user_prompt}" if context else f"{system_prompt}\n\n{user_prompt}"
-    )
-    prompt_versions = {
-        "system_prompt": get_prompt_version("system_prompt"),
-        "user_query": get_prompt_version("user_query"),
-    }
     max_tokens = response_token_budget(metadata)
 
     with _tracer.trace(
@@ -300,7 +378,8 @@ def generate_stream_node(
         "prompt",
         inputs={"prompt": combined, "question": state["query"]},
         metadata={
-            "prompt_versions": prompt_versions,
+            **prompt_metadata,
+            "retrieval_fingerprint": metadata.get("retrieval_fingerprint", {}),
             "verbosity": metadata.get("verbosity", VERBOSITY_CONCISE),
             "question_type": metadata.get("question_type", QUESTION_TYPE_FACTUAL),
             "max_tokens": max_tokens,
@@ -310,9 +389,6 @@ def generate_stream_node(
     ):
         pass
 
-    # Use the streaming buffer from state
-    streaming_buffer = state.get("_streaming_buffer") or []
-    streaming_callback = state.get("_streaming_callback")
     full_response = ""
 
     with _tracer.trace(
@@ -333,6 +409,7 @@ def generate_stream_node(
         "_streaming_buffer": streaming_buffer,
         "metadata": {
             **dict(state.get("metadata", {})),
+            **prompt_metadata,
             "finish_reason": getattr(llm_service, "last_finish_reason", None) or "",
             "max_tokens": max_tokens,
         },
@@ -371,45 +448,38 @@ def validate_node(
             for s in sources
         ]
 
-        errors: list[str] = []
-        body = re.split(r"\n\s*(?:Sources|References|स्रोत)\s*:?\s*\n", response_text, maxsplit=1)[0]
-        cited_ids_in_response = [int(m) for m in re.findall(r"\[(\d+)\]", body)]
+        metadata = dict(state.get("metadata", {}))
+        summary, body, cited_ids_in_response = validate_response(
+            response=response_text,
+            sources=source_infos,
+            metadata=metadata,
+        )
+        errors = list(summary.errors)
+        warnings = list(summary.warnings)
         valid_source_ids = [s.citation_id for s in source_infos]
         logger.debug("Cited IDs in response body: %s", cited_ids_in_response)
         logger.debug("Valid source citation_ids: %s", valid_source_ids)
 
-        not_found_patterns = [
-            "could not find",
-            "not available",
-            "not found",
-            "not covered",
-            "does not contain",
-            "do not contain",
-            "no information",
-            "unable to find",
-        ]
-        body_lower = body.lower()
-        indicates_not_found = any(p in body_lower for p in not_found_patterns)
-
         if not source_infos:
             confidence = 0.0
-            errors.append("No citation sources available")
-        elif indicates_not_found:
+        elif "LLM indicated information not found in sources" in errors:
             confidence = 0.3
-            errors.append("LLM indicated information not found in sources")
-        elif len(cited_ids_in_response) == 0:
+        elif (
+            "No inline citations in response body" in errors
+            or "Response contains citations not found in sources" in errors
+            or "LLM response truncated by token cap" in errors
+        ):
             confidence = 0.4
-            errors.append("No inline citations in response body")
+        else:
+            confidence = 0.8
+
+        if "No inline citations in response body" in errors:
             logger.warning("No inline citations in response body — appending source list")
             source_block = "\n\n**Sources:**\n"
             for s in source_infos:
                 source_block += f"[{s.citation_id}] {s.title} - {s.url}\n"
             response_text += source_block
-        elif validate_citations(body, source_infos):
-            confidence = 0.8
-        else:
-            confidence = 0.4
-            errors.append("Response contains citations not found in sources")
+        elif "Response contains citations not found in sources" in errors:
             logger.warning("Citations missing or out of range — appending source list")
             source_block = "\n\n**Sources:**\n"
             for s in source_infos:
@@ -420,7 +490,6 @@ def validate_node(
         response_word_count = len(body.split())
         length_warning = verbosity == VERBOSITY_CONCISE and response_word_count > CONCISE_RESPONSE_WORD_CAP
         truncated = state.get("metadata", {}).get("finish_reason") == "length"
-        metadata = dict(state.get("metadata", {}))
         if length_warning:
             logger.warning(
                 "Concise query answered with %d words (cap %d) — downgrading confidence",
@@ -433,13 +502,17 @@ def validate_node(
             logger.warning("LLM response truncated by token cap (finish_reason=length)")
         metadata["truncated"] = truncated
         metadata["response_word_count"] = response_word_count
+        metadata["validation_status"] = summary.status.value
+        metadata["validation_warnings"] = warnings
+        metadata["validation_retryable"] = summary.retryable
 
-        citations_valid = len(errors) == 0
+        citations_valid = summary.status != ValidationStatus.FAIL
         span.set_outputs(
             {
                 "citations_valid": citations_valid,
                 "confidence": confidence,
                 "errors": errors,
+                "warnings": warnings,
                 "cited_ids_in_response": cited_ids_in_response,
                 "response_word_count": response_word_count,
                 "length_warning": length_warning,

@@ -3,6 +3,8 @@
 import logging
 from typing import Any
 
+from nagrik_ai.agent.nodes import NO_RETRIEVAL_RESPONSE
+from nagrik_ai.prompts.prompt_loader import load_prompt
 from nagrik_ai.services.llm_service import create_llm_service
 from nagrik_ai.services.tracing import get_tracer
 from nagrik_ai.tools.web_search import web_search
@@ -23,7 +25,7 @@ def rag_search(query: str, session_id: str | None = None, user_id: str | None = 
     if not result.citations_valid:
         logger.info("RAG returned invalid citations; falling back to web search")
         needs_fallback = True
-    elif "I could not find this information" in answer:
+    elif "I could not find this information" in answer or NO_RETRIEVAL_RESPONSE in answer:
         needs_fallback = True
 
     if needs_fallback:
@@ -38,7 +40,7 @@ def rag_search(query: str, session_id: str | None = None, user_id: str | None = 
             )
             synthesized = llm.generate(
                 synthesis_prompt,
-                system="You are a helpful assistant. Answer based on the web search results provided.",
+                system=load_prompt("system_prompt"),
             )
             logger.info("Web search fallback synthesized response successfully")
             return synthesized

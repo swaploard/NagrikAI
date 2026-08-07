@@ -20,6 +20,8 @@ from nagrik_ai.agent.nodes import (
 )
 from nagrik_ai.models.agent_state import AgentState
 from nagrik_ai.models.rag_result import RAGResult
+from nagrik_ai.prompts.prompt_loader import load_prompt
+from nagrik_ai.prompts.prompt_registry import CompiledPromptPipeline, load_default_prompt_pipeline
 from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
 from nagrik_ai.services.llm_service import BaseLLMService
 from nagrik_ai.services.reranker import Reranker
@@ -66,6 +68,7 @@ def create_rag_graph(
     reranker: Reranker | None = None,
     llm_service: BaseLLMService | None = None,
     system_prompt: str = "",
+    compiled_pipeline: CompiledPromptPipeline | None = None,
     tracer: LangSmithTracer | None = None,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     enable_streaming: bool = False,
@@ -79,15 +82,15 @@ def create_rag_graph(
         from nagrik_ai.services.llm_service import create_llm_service
 
         llm_service = create_llm_service(temperature=0.1)
+    if not system_prompt and compiled_pipeline is None:
+        compiled_pipeline = load_default_prompt_pipeline()
     workflow: StateGraph[AgentState, None, AgentState, AgentState] = StateGraph(
         state_schema=AgentState,
         context_schema=None,
     )
 
     def wrapped_classify(state: AgentState) -> dict[str, Any]:
-        return classify_node(
-            state, tracer=_tracer, session_id=state.get("session_id"), user_id=state.get("user_id")
-        )
+        return classify_node(state, tracer=_tracer, session_id=state.get("session_id"), user_id=state.get("user_id"))
 
     def wrapped_retrieve(state: AgentState) -> dict[str, Any]:
         return retrieve_node(
@@ -104,6 +107,7 @@ def create_rag_graph(
             state,
             llm_service,
             system_prompt,
+            compiled_pipeline=compiled_pipeline,
             tracer=_tracer,
             session_id=state.get("session_id"),
             user_id=state.get("user_id"),
@@ -114,6 +118,7 @@ def create_rag_graph(
             state,
             llm_service,
             system_prompt,
+            compiled_pipeline=compiled_pipeline,
             tracer=_tracer,
             session_id=state.get("session_id"),
             user_id=state.get("user_id"),
@@ -149,7 +154,7 @@ def create_rag_graph(
             )
             synthesized = llm_service.generate(
                 synthesis_prompt,
-                system="You are a helpful assistant. Answer based on the web search results provided.",
+                system=system_prompt or load_prompt("system_prompt"),
             )
             return {"answer": synthesized, "errors": []}
 
@@ -192,19 +197,22 @@ def create_rag_graph(
 
     # Conditional edge after validation
     if enable_self_correction:
+
         def should_retry(state: AgentState) -> str:
             answer = state.get("answer", "") or ""
             retry_count = state.get("metadata", {}).get("retry_count", 0)
             citations_valid = state.get("citations_valid", False)
             truncated = state.get("metadata", {}).get("truncated", False)
+            retryable = bool(state.get("metadata", {}).get("validation_retryable", False))
             if (
-                (not citations_valid or truncated)
+                ((not citations_valid and retryable) or truncated)
                 and retry_count < max_retries
                 and answer
                 and "llm_service is required" not in answer
             ):
                 return "retry"
             return "finalize"
+
         workflow.add_conditional_edges(
             "validate",
             should_retry,
@@ -212,19 +220,24 @@ def create_rag_graph(
         )
         workflow.add_edge("retry_generate", "validate")
     elif enable_fallback:
+
         def should_fallback(state: AgentState) -> str:
             citations = state.get("citations", [])
             citations_valid = state.get("citations_valid", True)
             confidence = state.get("confidence", 1.0)
             retry_count = state.get("metadata", {}).get("retry_count", 0)
             truncated = state.get("metadata", {}).get("truncated", False)
+            retryable = bool(state.get("metadata", {}).get("validation_retryable", False))
             if truncated and retry_count < max_retries:
+                return "retry"
+            if not citations_valid and retryable and retry_count < max_retries:
                 return "retry"
             if not citations:
                 return "fallback"
             if not citations_valid or (confidence is not None and confidence < 0.5):
                 return "fallback"
             return "finalize"
+
         workflow.add_conditional_edges(
             "validate",
             should_fallback,
@@ -256,6 +269,7 @@ def run_rag_query(
     reranker: Reranker | None = None,
     llm_service: BaseLLMService | None = None,
     system_prompt: str = "",
+    compiled_pipeline: CompiledPromptPipeline | None = None,
     tracer: LangSmithTracer | None = None,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     retrieval_config: dict[str, Any] | None = None,
@@ -271,6 +285,7 @@ def run_rag_query(
         reranker=reranker,
         llm_service=llm_service,
         system_prompt=system_prompt,
+        compiled_pipeline=compiled_pipeline,
         tracer=tracer,
         checkpointer=checkpointer,
         enable_fallback=enable_fallback,
@@ -295,6 +310,7 @@ def stream_rag_query(
     reranker: Reranker | None = None,
     llm_service: BaseLLMService | None = None,
     system_prompt: str = "",
+    compiled_pipeline: CompiledPromptPipeline | None = None,
     tracer: LangSmithTracer | None = None,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     retrieval_config: dict[str, Any] | None = None,
@@ -310,6 +326,7 @@ def stream_rag_query(
         reranker=reranker,
         llm_service=llm_service,
         system_prompt=system_prompt,
+        compiled_pipeline=compiled_pipeline,
         tracer=tracer,
         checkpointer=checkpointer,
         enable_streaming=True,

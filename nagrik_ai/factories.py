@@ -32,7 +32,7 @@ from nagrik_ai.config.config_models import (
 )
 from nagrik_ai.models.agent_state import AgentState
 from nagrik_ai.models.rag_result import RAGResult
-from nagrik_ai.prompts.prompt_loader import load_prompt
+from nagrik_ai.prompts.prompt_registry import CompiledPromptPipeline, load_default_prompt_pipeline
 from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
 from nagrik_ai.services.llm_service import BaseLLMService, create_llm_service
 from nagrik_ai.services.reranker import Reranker
@@ -120,6 +120,7 @@ def create_rag_graph(
     tracer: LangSmithTracer | None = None,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     system_prompt: str = "",
+    compiled_pipeline: CompiledPromptPipeline | None = None,
     enable_streaming: bool = False,
     enable_fallback: bool = False,
     enable_self_correction: bool = False,
@@ -130,11 +131,13 @@ def create_rag_graph(
         retrieval_service = create_retrieval_service()
     if llm_service is None:
         llm_service = create_llm_service(temperature=0.1, max_tokens=MAX_RESPONSE_TOKENS)
+    resolved_pipeline = None if system_prompt else (compiled_pipeline or load_default_prompt_pipeline())
     return _build_rag_graph(
         retrieval_service=retrieval_service,
         reranker=reranker or create_reranker(),
         llm_service=llm_service,
-        system_prompt=system_prompt or load_prompt("system_prompt"),
+        system_prompt=system_prompt,
+        compiled_pipeline=resolved_pipeline,
         tracer=tracer,
         checkpointer=checkpointer,
         enable_streaming=enable_streaming,
@@ -161,6 +164,7 @@ def create_rag_graph_entry(
     tracer: LangSmithTracer | None = None,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     system_prompt: str = "",
+    compiled_pipeline: CompiledPromptPipeline | None = None,
     enable_fallback: bool = False,
     enable_self_correction: bool = False,
     max_retries: int = 2,
@@ -177,6 +181,7 @@ def create_rag_graph_entry(
             reranker=reranker,
             llm_service=llm_service,
             system_prompt=system_prompt,
+            compiled_pipeline=compiled_pipeline,
             tracer=tracer,
             checkpointer=checkpointer,
             enable_fallback=enable_fallback,
@@ -195,6 +200,7 @@ def create_rag_graph_entry(
             reranker=reranker,
             llm_service=llm_service,
             system_prompt=system_prompt,
+            compiled_pipeline=compiled_pipeline,
             tracer=tracer,
             checkpointer=checkpointer,
             enable_fallback=enable_fallback,
@@ -207,6 +213,7 @@ def create_rag_graph_entry(
         reranker=reranker,
         llm_service=llm_service,
         system_prompt=system_prompt,
+        compiled_pipeline=compiled_pipeline,
         tracer=tracer,
         checkpointer=checkpointer,
         enable_fallback=enable_fallback,

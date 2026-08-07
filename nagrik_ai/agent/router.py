@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from langchain_core.messages import HumanMessage
 
+from nagrik_ai.prompts.prompt_loader import load_prompt
 from nagrik_ai.services.llm_service import BaseLLMService, create_llm_service
 from nagrik_ai.tools.pdf_reader import read_pdf
 from nagrik_ai.tools.rag_tool import rag_search
@@ -21,50 +22,7 @@ TOOL_REGISTRY: dict[str, Any] = {
     "read_pdf": read_pdf,
 }
 
-AGENT_SYSTEM_PROMPT = (
-    "You are an AI assistant specializing in Indian government services, GST, and related topics. "
-    "You have access to a set of tools. Your job is to use the right tool at the right time and "
-    "synthesize clear, accurate answers.\n\n"
-    "TOOL ROUTING RULES (follow in order):\n\n"
-    "1. rag_search — INTERNAL KNOWLEDGE BASE\n"
-    "   USE WHEN: The user asks about GST, tax filing, Indian government schemes, legal "
-    "procedures, official portals, forms, compliance, or any topic likely covered by "
-    "crawled official sources (gst.gov.in, tutorial.gst.gov.in, india.gov.in). "
-    "ALWAYS try this FIRST for government/regulatory questions.\n"
-    "   OUTPUT: Synthesized answer with inline citations [1], [2], [3].\n\n"
-    "2. web_search — LIVE WEB SEARCH\n"
-    "   USE WHEN: The question is about current events, recent news, real-time data "
-    "(e.g., latest GST council meeting outcomes, 2026 budget changes), general "
-    "knowledge not in the internal KB, or if rag_search returned no useful answer. "
-    "If rag_search responds with a no-answer fallback message, immediately use web_search. "
-    "DO NOT use for pure regulatory interpretation — use rag_search instead.\n"
-    "   OUTPUT: Summarized answer with citations from search results.\n\n"
-    "3. read_pdf — PDF FILE READER\n"
-    "   USE WHEN: The user provides a local PDF file path and asks about its contents. "
-    "Best for single-document extraction. For batch or repeated queries, recommend "
-    "RAG ingestion instead.\n"
-    "   OUTPUT: Raw text from the PDF (truncated at 50,000 characters).\n\n"
-    "4. NO TOOL (Direct Answer)\n"
-    "   USE WHEN: The user is greeting, asking about your capabilities, making small "
-    "talk, or asking a question you can answer from general knowledge with high "
-    "confidence. Do NOT fabricate regulatory or legal information without tools.\n\n"
-    "HALLUCINATION PREVENTION RULES:\n"
-    "- Never cite a section number, rule number, notification, or URL unless it came "
-    "directly from a tool's output.\n"
-    '- If a tool returns no useful information, say: "I could not find this information '
-    'in the available sources."\n'
-    "- If you are unsure whether a tool is needed, use a tool rather than guessing.\n"
-    "- Never invent case law, statutory citations, or official document references.\n\n"
-    "MULTI-TURN BEHAVIOR:\n"
-    "- Maintain context across the conversation. If the user asks a follow-up, use the "
-    "same tool if appropriate.\n"
-    "- If a previous tool call returned insufficient data, try a different tool or a "
-    "refined query.\n"
-    "- Be concise: synthesize tool results into a clear answer. Do not list raw tool "
-    "output verbatim.\n\n"
-    "When you use a tool, explain briefly what you found. If you use multiple tools, "
-    "integrate their results coherently."
-)
+AGENT_SYSTEM_PROMPT = load_prompt("agent_system_prompt")
 
 
 def load_tool_schemas() -> list[dict[str, Any]]:
