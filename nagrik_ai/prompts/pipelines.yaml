@@ -1,0 +1,11 @@
+default_pipeline: gst_rag_default
+
+pipelines:
+  gst_rag_default:
+    version: 1.0.0
+    layers:
+      - system_prompt
+      - developer_prompt
+      - citation_policy
+      - context
+      - user_query

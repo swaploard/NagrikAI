@@ -288,12 +288,25 @@ sites:
 chroma_persist_dir: chroma_db
 content_dir: content
 embedding_model: BAAI/bge-m3
+authority_ranking_enabled: true
+authority_bonus:
+  act: 0.08
+  rules: 0.08
+  notification: 0.06
+  circular: 0.05
+  faq: 0.02
+  user_guide: 0.01
+  help: 0.0
+  other: 0.0
 reranker_model: BAAI/bge-reranker-large
 reranker_enabled: true
 hybrid_search_enabled: true
 bm25_k1: 1.5
 bm25_b: 0.75
 rrf_k: 60
+max_response_tokens: 4096
+max_response_tokens_detailed: 8192
+max_response_tokens_hard: 16384
 llm_provider: ollama
 ollama_base_url: http://localhost:11434
 ollama_model: mistral:latest
