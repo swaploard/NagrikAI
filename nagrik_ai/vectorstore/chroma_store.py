@@ -1,6 +1,7 @@
 """ChromaDB vector store abstraction using LangChain."""
 
 import logging
+import time
 from typing import Any, cast
 
 from langchain_chroma import Chroma
@@ -77,13 +78,19 @@ class ChromaStore:
         self.embeddings = embeddings
 
         # Initialize the vector store
+        load_start = time.perf_counter()
         self.vector_db = Chroma(
             collection_name=collection_name,
             embedding_function=self.embeddings,
             persist_directory=persist_directory,
         )
+        load_elapsed = (time.perf_counter() - load_start) * 1000
 
-        logger.info("Initialized ChromaStore with collection: %s", collection_name)
+        logger.info(
+            "Initialized ChromaStore with collection: %s (construction %.0f ms)",
+            collection_name,
+            load_elapsed,
+        )
 
     def add_document(
         self,
@@ -149,6 +156,7 @@ class ChromaStore:
         Returns:
             List of documents most similar to the query
         """
+        search_start = time.perf_counter()
         try:
             results: list[Document] = self.vector_db.similarity_search(
                 query=query_text,
@@ -164,6 +172,13 @@ class ChromaStore:
             logger.exception("Failed to similarity search vector store")
             return []
         else:
+            search_elapsed = (time.perf_counter() - search_start) * 1000
+            logger.info(
+                "similarity_search: k=%d, %d results (%.0f ms, incl. query embedding)",
+                k,
+                len(results),
+                search_elapsed,
+            )
             return results
 
     def similarity_search_with_scores(

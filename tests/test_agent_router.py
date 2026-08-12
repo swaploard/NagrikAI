@@ -11,7 +11,7 @@ class StubLLMService:
         self.calls: list[list[dict[str, object]]] = []
         self.tool_call_count = 0
 
-    def chat(self, messages: list[dict[str, object]], tools: object | None = None, system: str | None = None):
+    def chat(self, messages: list[dict[str, object]], tools: object | None = None, system: str | None = None):  # noqa: ARG002
         self.calls.append(messages)
         if self.tool_call_count == 0:
             self.tool_call_count += 1

@@ -39,8 +39,9 @@ def web_search(query: str) -> str:
         data: dict[str, Any] = response.json()
 
         # Extract the answer if available, otherwise combine snippets
-        if data.get("answer"):
-            return data["answer"]
+        answer = data.get("answer")
+        if answer:
+            return str(answer)
 
         # Fallback: combine content from results
         results = data.get("results", [])

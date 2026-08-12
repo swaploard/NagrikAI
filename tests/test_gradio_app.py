@@ -3,14 +3,9 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from nagrik_ai.app import _build_ui
-from nagrik_ai.services.rag_orchestrator import RAGOrchestrator
 
 
 def test_build_ui_returns_blocks(mock_retrieval_service: MagicMock, mock_llm_service: MagicMock) -> None:
-    orch = RAGOrchestrator(
-        retrieval_service=mock_retrieval_service,
-        llm_service=mock_llm_service,
-    )
-    demo = _build_ui(orch)
+    demo = _build_ui()
     assert demo is not None
     assert hasattr(demo, "launch")

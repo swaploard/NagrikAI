@@ -46,6 +46,7 @@ class ConfigManager:
             "top_k": "NAGRIKAI_TOP_K",
             "fetch_k": "NAGRIKAI_FETCH_K",
             "lambda_mult": "NAGRIKAI_LAMBDA_MULT",
+            "reranker_provider": "NAGRIKAI_RERANKER_PROVIDER",
             "reranker_model": "NAGRIKAI_RERANKER_MODEL",
             "reranker_enabled": "NAGRIKAI_RERANKER_ENABLED",
             "hybrid_search_enabled": "NAGRIKAI_HYBRID_SEARCH_ENABLED",

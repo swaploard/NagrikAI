@@ -103,6 +103,7 @@ class NagrikAIConfig(BaseModel):
     top_k: int = _get_env_int("NAGRIKAI_TOP_K", 5)
     fetch_k: int = _get_env_int("NAGRIKAI_FETCH_K", 20)
     lambda_mult: float = _get_env_float("NAGRIKAI_LAMBDA_MULT", 0.7)
+    reranker_provider: str = _get_env("NAGRIKAI_RERANKER_PROVIDER", "local")
     reranker_model: str = _get_env("NAGRIKAI_RERANKER_MODEL", "BAAI/bge-reranker-large")
     reranker_enabled: bool = _get_env_bool("NAGRIKAI_RERANKER_ENABLED", True)
     hybrid_search_enabled: bool = _get_env_bool("NAGRIKAI_HYBRID_SEARCH_ENABLED", True)
@@ -142,6 +143,7 @@ CHUNK_OVERLAP = _defaults.chunk_overlap
 TOP_K = _defaults.top_k
 FETCH_K = _defaults.fetch_k
 LAMBDA_MULT = _defaults.lambda_mult
+RERANKER_PROVIDER = _defaults.reranker_provider
 RERANKER_MODEL = _defaults.reranker_model
 RERANKER_ENABLED = _defaults.reranker_enabled
 HYBRID_SEARCH_ENABLED = _defaults.hybrid_search_enabled

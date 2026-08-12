@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from langchain_core.documents import Document
@@ -28,6 +29,7 @@ class BM25Retriever:
         return text.lower().split()
 
     def _build_index(self) -> None:
+        build_start = time.perf_counter()
         docs: list[Document] = self.chroma_store.get_all_documents()
         self._documents = []
         for doc in docs:
@@ -47,11 +49,13 @@ class BM25Retriever:
             return
         tokenized_corpus = [self._tokenize(doc.page_content) for doc in docs]
         self._bm25 = BM25Okapi(tokenized_corpus, k1=self.k1, b=self.b)
+        build_elapsed = (time.perf_counter() - build_start) * 1000
         logger.info(
-            "Built BM25 index with %d documents (k1=%.2f, b=%.2f)",
+            "Built BM25 index with %d documents (k1=%.2f, b=%.2f) in %.0f ms",
             len(self._documents),
             self.k1,
             self.b,
+            build_elapsed,
         )
 
     def retrieve(self, query: str, k: int = 20) -> list[dict[str, Any]]:

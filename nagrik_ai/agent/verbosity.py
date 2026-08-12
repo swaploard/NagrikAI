@@ -86,13 +86,9 @@ def classify_verbosity(query: str) -> Verbosity:
     return VERBOSITY_CONCISE
 
 
-COMPARISON_KEYWORDS: frozenset[str] = frozenset(
-    {"compare", "comparison", "difference", "differences", "versus", "vs"}
-)
+COMPARISON_KEYWORDS: frozenset[str] = frozenset({"compare", "comparison", "difference", "differences", "versus", "vs"})
 
-CALCULATION_KEYWORDS: frozenset[str] = frozenset(
-    {"calculate", "calculation", "compute", "computed", "computation"}
-)
+CALCULATION_KEYWORDS: frozenset[str] = frozenset({"calculate", "calculation", "compute", "computed", "computation"})
 
 PROCEDURAL_KEYWORDS: frozenset[str] = frozenset(
     {"procedure", "process", "step", "steps", "file", "apply", "register", "submit", "obtain"}

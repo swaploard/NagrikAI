@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
 from nagrik_ai.config.config_models import CHROMA_PERSIST_DIR, CONTENT_DIR
-from nagrik_ai.factories import create_chroma_store, create_config_manager
+from nagrik_ai.factories import build_app_stack, create_chroma_store, create_config_manager, warmup
 from nagrik_ai.parser.parser import Parser
 from nagrik_ai.services.tracing import get_tracer
 from nagrik_ai.utils.text_utils import HybridMarkdownSplitter
@@ -198,7 +199,17 @@ def app_command(
     typer.echo(f"📚 Using ChromaDB collection 'nagrik_ai_docs' from '{persist_dir}'")
     typer.echo(f"🤖 LLM Provider: {llm_provider}")
 
-    launch(share=share, server_port=port)
+    typer.echo("⏳ Building app stack (loading models, wiring dependencies)...")
+    stack_start = time.perf_counter()
+    stack = build_app_stack(persist_dir=persist_dir, enable_fallback=True)
+    typer.echo(f"✅ App stack built in {time.perf_counter() - stack_start:.1f}s")
+
+    typer.echo("🔥 Warming up (embed query, BM25 index, reranker first predict)...")
+    warmup_start = time.perf_counter()
+    warmup(stack)
+    typer.echo(f"✅ Warmup complete in {time.perf_counter() - warmup_start:.1f}s")
+
+    launch(stack=stack, share=share, server_port=port)
 
 
 agent_app = typer.Typer(name="agent")

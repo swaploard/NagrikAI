@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import gradio as gr
 
+from nagrik_ai.factories import AppStack, get_app_stack
 from nagrik_ai.models.rag_result import RAGResult, SourceInfo
 from nagrik_ai.services.citation_service import make_citations_clickable
 from nagrik_ai.services.llm_service import RateLimitError
@@ -49,12 +50,12 @@ def handle_pdf_upload(file: Any) -> tuple[str, str]:
         return "", f"Error reading PDF: {e}"
 
 
-def _build_ui() -> gr.Blocks:
+def _build_ui(stack: AppStack | None = None) -> gr.Blocks:
     """Build the Gradio interface used by the launcher."""
-    return _build_streaming_ui()
+    return _build_streaming_ui(stack)
 
 
-def _build_streaming_ui() -> gr.Blocks:
+def _build_streaming_ui(stack: AppStack | None = None) -> gr.Blocks:
     """Build a Gradio interface with streaming response support and sources panel."""
 
     def respond_stream(
@@ -76,10 +77,10 @@ def _build_streaming_ui() -> gr.Blocks:
                 enhanced_query = f"[Uploaded PDF content]\n{pdf_context[:20000]}\n\n[User question]\n{message}"
             else:
                 enhanced_query = message
-            from nagrik_ai.agent.rag_graph import stream_rag_query
 
-            stream: Iterator[dict[str, Any]] = stream_rag_query(
-                enhanced_query, session_id=session_state, enable_fallback=True,
+            stream: Iterator[dict[str, Any]] = (stack or get_app_stack(enable_fallback=True)).stream_query(
+                enhanced_query,
+                session_id=session_state,
             )
             chat_history.pop()
             assistant_response = ""
@@ -97,9 +98,7 @@ def _build_streaming_ui() -> gr.Blocks:
                 elif chunk["type"] == "final":
                     result: RAGResult = chunk["data"]
                     citations_display = (
-                        "Sources: Web search results"
-                        if not result.citations_valid
-                        else _format_sources(result.sources)
+                        "Sources: Web search results" if not result.citations_valid else _format_sources(result.sources)
                     )
                     clickable_response = make_citations_clickable(result.response, result.sources)
                     if result.truncated:
@@ -212,8 +211,8 @@ def _build_streaming_ui() -> gr.Blocks:
     return demo  # type: ignore[no-any-return]
 
 
-def launch(**kwargs: Any) -> None:
-    demo = _build_ui()
+def launch(stack: AppStack | None = None, **kwargs: Any) -> None:
+    demo = _build_ui(stack)
     demo.launch(**kwargs)
 
 

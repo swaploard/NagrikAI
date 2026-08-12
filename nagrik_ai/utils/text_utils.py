@@ -128,8 +128,10 @@ def remove_javascript(html_content: str) -> str:
     return re.sub(r"(\s)javascript:", r"\1", cleaned)
 
 
-def _normalize_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+def _normalize_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
     normalized: dict[str, Any] = {}
+    if metadata is None:
+        return normalized
     for key, value in metadata.items():
         normalized[key] = value
     return normalized

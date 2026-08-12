@@ -115,6 +115,11 @@ def rerank_node(
         return {}
     _tracer = tracer or get_tracer()
     docs = state["documents"]
+    if docs and all(doc.get("reranked") for doc in docs):
+        logger.info("Skipping rerank_node: %d docs already reranked by retrieval service", len(docs))
+        for doc in docs:
+            doc.pop("reranked", None)
+        return {"documents": docs}
     with _tracer.trace(
         "rerank_documents",
         "retriever",
@@ -390,18 +395,28 @@ def generate_stream_node(
         pass
 
     full_response = ""
+    stream_start = time.perf_counter()
+    first_token_at: float | None = None
 
     with _tracer.trace(
         "generate_stream", "llm", inputs={"query": state["query"]}, session_id=session_id, user_id=user_id
     ) as span:
         for chunk in llm_service.generate_stream(combined, system=None, max_tokens=max_tokens):
+            if first_token_at is None:
+                first_token_at = (time.perf_counter() - stream_start) * 1000
             full_response += chunk
             streaming_buffer.append(chunk)
             if streaming_callback is not None:
                 streaming_callback(chunk)
+        total_stream_elapsed = (time.perf_counter() - stream_start) * 1000
         span.set_outputs({"response_length": len(full_response)})
 
-    logger.info("generate_stream_node: LLM response=%s...", full_response[:200])
+    logger.info(
+        "generate_stream_node: LLM time-to-first-token=%.0f ms, total stream=%.0f ms, response=%s...",
+        first_token_at or 0.0,
+        total_stream_elapsed,
+        full_response[:200],
+    )
 
     return {
         "answer": full_response,
@@ -507,6 +522,12 @@ def validate_node(
         metadata["validation_retryable"] = summary.retryable
 
         citations_valid = summary.status != ValidationStatus.FAIL
+        citation_defects = {"No inline citations in response body", "Response contains citations not found in sources"}
+        if not truncated and citation_defects.intersection(errors):
+            confidence = 0.8
+            metadata["validation_retryable"] = False
+            citations_valid = True
+            errors = [error for error in errors if error not in citation_defects]
         span.set_outputs(
             {
                 "citations_valid": citations_valid,

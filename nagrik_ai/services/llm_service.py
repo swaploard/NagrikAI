@@ -84,9 +84,7 @@ class BaseLLMService(ABC):
         pass
 
     @abstractmethod
-    def generate_stream(
-        self, prompt: str, system: str | None = None, max_tokens: int | None = None
-    ) -> Iterator[str]:
+    def generate_stream(self, prompt: str, system: str | None = None, max_tokens: int | None = None) -> Iterator[str]:
         pass
 
     @abstractmethod
@@ -165,9 +163,7 @@ class OllamaLLMService(BaseLLMService):
             span.set_outputs(outputs)
             return result
 
-    def generate_stream(
-        self, prompt: str, system: str | None = None, max_tokens: int | None = None
-    ) -> Iterator[str]:
+    def generate_stream(self, prompt: str, system: str | None = None, max_tokens: int | None = None) -> Iterator[str]:
         options = self._build_options(system, max_tokens)
         logger.info("About to call Ollama generate with stream (model: %s)", self.model)
         with self.tracer.trace(
@@ -258,20 +254,20 @@ class OllamaLLMService(BaseLLMService):
             },
         ) as span:
             span.start_timer()
-            response: ChatResponse = self.client.chat(**kwargs)  # type: ignore[reportUnknownMemberType]
-            message: Message = cast(Message, response.message)  # type: ignore[reportUnknownMemberType]
+            response: ChatResponse = self.client.chat(**kwargs)
+            message: Message = response.message
             latency = span.elapsed_ms()
 
             tool_calls: list[ToolCall] | None = None
             if message.tool_calls:
                 tool_calls = []
                 for idx, tc in enumerate(message.tool_calls):
-                    args = tc.function.arguments
-                    if isinstance(args, str):
-                        args = json.loads(args)
-                    if not isinstance(args, dict):
-                        args = dict(args)
-                    parsed_args = cast("dict[str, Any]", args)
+                    args_value: Any = tc.function.arguments
+                    if isinstance(args_value, str):
+                        args_value = json.loads(args_value)
+                    if not isinstance(args_value, dict):
+                        args_value = dict(args_value)
+                    parsed_args: dict[str, Any] = args_value
                     tool_calls.append(
                         ToolCall(
                             name=tc.function.name,
@@ -379,17 +375,13 @@ class OpenRouterLLMService(BaseLLMService):
                         outputs["token_usage"] = token_usage
                 if response.choices and response.choices[0].finish_reason:
                     outputs["finish_reason"] = response.choices[0].finish_reason
-                self.last_finish_reason = (
-                    response.choices[0].finish_reason if response.choices else None
-                )
+                self.last_finish_reason = response.choices[0].finish_reason if response.choices else None
                 span.set_outputs(outputs)
                 return result
         except Exception as e:
             self._handle_error(e)
 
-    def generate_stream(
-        self, prompt: str, system: str | None = None, max_tokens: int | None = None
-    ) -> Iterator[str]:
+    def generate_stream(self, prompt: str, system: str | None = None, max_tokens: int | None = None) -> Iterator[str]:
         messages: list[ChatCompletionMessageParam] = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -521,9 +513,7 @@ class OpenRouterLLMService(BaseLLMService):
                         "total": usage.total_tokens,
                     }
                     outputs["token_usage"] = token_usage
-                self.last_finish_reason = (
-                    response.choices[0].finish_reason if response.choices else None
-                )
+                self.last_finish_reason = response.choices[0].finish_reason if response.choices else None
                 span.set_outputs(outputs)
 
                 return LLMResponse(content=message.content, tool_calls=tool_calls)

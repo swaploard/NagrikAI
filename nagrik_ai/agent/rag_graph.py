@@ -261,6 +261,56 @@ def create_rag_graph(
     return app
 
 
+def run_query_from_graph(
+    graph: CompiledStateGraph[AgentState, Any, Any, Any],
+    query: str,
+    session_id: str | None = None,
+    user_id: str | None = None,
+    retrieval_config: dict[str, Any] | None = None,
+) -> RAGResult:
+    """Run a query against an already-compiled graph without recompiling."""
+    initial_state = build_initial_state(
+        query, session_id=session_id, user_id=user_id, retrieval_config=retrieval_config
+    )
+    final_state = graph.invoke(initial_state)
+    result = final_state.get("rag_result")
+    if result is None:
+        raise RuntimeError("RAG graph did not produce a result")
+    return result  # type: ignore[no-any-return]
+
+
+def stream_query_from_graph(
+    graph: CompiledStateGraph[AgentState, Any, Any, Any],
+    query: str,
+    session_id: str | None = None,
+    user_id: str | None = None,
+    retrieval_config: dict[str, Any] | None = None,
+) -> Iterator[dict[str, Any]]:
+    """Stream a query against an already-compiled graph without recompiling."""
+    initial_state = build_initial_state(
+        query, session_id=session_id, user_id=user_id, retrieval_config=retrieval_config
+    )
+
+    # Stream using graph.stream to get node-level updates
+    # The generate_stream_node will populate _streaming_buffer with tokens
+    # Capture the final state from the last node output (finalize) to avoid a second invoke
+    result: RAGResult | None = None
+    for chunk in graph.stream(initial_state, stream_mode="updates"):
+        node_name = next(iter(chunk.keys()))
+        node_output = chunk[node_name]
+
+        if node_name in {"generate_stream", "retry_generate"} and "_streaming_buffer" in node_output:
+            for token in node_output["_streaming_buffer"]:
+                yield {"type": "token", "content": token}
+
+        if node_name == "finalize" and "rag_result" in node_output:
+            result = node_output["rag_result"]
+
+    if result is None:
+        raise RuntimeError("RAG graph did not produce a result")
+    yield {"type": "final", "data": result}
+
+
 def run_rag_query(
     query: str,
     session_id: str | None = None,
@@ -292,14 +342,13 @@ def run_rag_query(
         enable_self_correction=enable_self_correction,
         max_retries=max_retries,
     )
-    initial_state = build_initial_state(
-        query, session_id=session_id, user_id=user_id, retrieval_config=retrieval_config
+    return run_query_from_graph(
+        graph,
+        query,
+        session_id=session_id,
+        user_id=user_id,
+        retrieval_config=retrieval_config,
     )
-    final_state = graph.invoke(initial_state)
-    result = final_state.get("rag_result")
-    if result is None:
-        raise RuntimeError("RAG graph did not produce a result")
-    return result  # type: ignore[no-any-return]
 
 
 def stream_rag_query(
@@ -334,25 +383,10 @@ def stream_rag_query(
         enable_self_correction=enable_self_correction,
         max_retries=max_retries,
     )
-    initial_state = build_initial_state(
-        query, session_id=session_id, user_id=user_id, retrieval_config=retrieval_config
+    yield from stream_query_from_graph(
+        graph,
+        query,
+        session_id=session_id,
+        user_id=user_id,
+        retrieval_config=retrieval_config,
     )
-
-    # Stream using graph.stream to get node-level updates
-    # The generate_stream_node will populate _streaming_buffer with tokens
-    # Capture the final state from the last node output (finalize) to avoid a second invoke
-    result: RAGResult | None = None
-    for chunk in graph.stream(initial_state, stream_mode="updates"):
-        node_name = next(iter(chunk.keys()))
-        node_output = chunk[node_name]
-
-        if node_name in {"generate_stream", "retry_generate"} and "_streaming_buffer" in node_output:
-            for token in node_output["_streaming_buffer"]:
-                yield {"type": "token", "content": token}
-
-        if node_name == "finalize" and "rag_result" in node_output:
-            result = node_output["rag_result"]
-
-    if result is None:
-        raise RuntimeError("RAG graph did not produce a result")
-    yield {"type": "final", "data": result}

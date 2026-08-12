@@ -4,7 +4,8 @@ import datetime
 import logging
 import os
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Literal
@@ -25,6 +26,15 @@ logger = logging.getLogger(__name__)
 RunType = Literal["tool", "chain", "llm", "retriever", "embedding", "prompt", "parser"]
 
 _current_run_id: ContextVar[str | None] = ContextVar("current_run_id", default=None)
+
+_trace_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="langsmith")
+
+
+def _submit_async(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
+    try:
+        _trace_executor.submit(fn, *args, **kwargs)
+    except Exception:
+        logger.debug("Failed to submit LangSmith trace HTTP call", exc_info=True)
 
 
 class LangSmithSpan:
@@ -129,7 +139,8 @@ class LangSmithTracer:
         if parent_run_id:
             create_kwargs["parent_run_id"] = parent_run_id
 
-        self._client.create_run(
+        _submit_async(
+            self._client.create_run,
             name=name,
             inputs=inputs or {},
             run_type=run_type,
@@ -146,30 +157,30 @@ class LangSmithTracer:
             yield span
         except GeneratorExit:
             span.metadata["early_exit"] = True
-            update_kwargs: dict[str, Any] = {"end_time": datetime.datetime.now(datetime.UTC)}
+            early_exit_kwargs: dict[str, Any] = {"end_time": datetime.datetime.now(datetime.UTC)}
             if span.outputs:
-                update_kwargs["outputs"] = dict(span.outputs)
+                early_exit_kwargs["outputs"] = dict(span.outputs)
             if span.metadata:
-                update_kwargs["extra"] = {"metadata": dict(span.metadata)}
-            self._client.update_run(run_id=run_id, **update_kwargs)  # type: ignore[arg-type]
+                early_exit_kwargs["extra"] = {"metadata": dict(span.metadata)}
+            _submit_async(self._client.update_run, run_id=run_id, **early_exit_kwargs)
             raise
         except Exception as e:
-            update_kwargs: dict[str, Any] = {
+            error_kwargs: dict[str, Any] = {
                 "error": f"{type(e).__name__}: {e}",
                 "end_time": datetime.datetime.now(datetime.UTC),
             }
             if span.outputs:
-                update_kwargs["outputs"] = dict(span.outputs)
-            self._client.update_run(run_id=run_id, **update_kwargs)  # type: ignore[arg-type]
+                error_kwargs["outputs"] = dict(span.outputs)
+            _submit_async(self._client.update_run, run_id=run_id, **error_kwargs)
             raise
         else:
-            update_kwargs: dict[str, Any] = {"end_time": datetime.datetime.now(datetime.UTC)}
+            final_kwargs: dict[str, Any] = {"end_time": datetime.datetime.now(datetime.UTC)}
             if span.outputs:
-                update_kwargs["outputs"] = dict(span.outputs)
+                final_kwargs["outputs"] = dict(span.outputs)
             if span.metadata:
                 extra_meta = {"metadata": dict(span.metadata)}
-                update_kwargs["extra"] = extra_meta
-            self._client.update_run(run_id=run_id, **update_kwargs)  # type: ignore[arg-type]
+                final_kwargs["extra"] = extra_meta
+            _submit_async(self._client.update_run, run_id=run_id, **final_kwargs)
         finally:
             _current_run_id.set(parent_run_id)
 

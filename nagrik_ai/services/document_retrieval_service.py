@@ -299,6 +299,7 @@ class DocumentRetrievalService:
             )
 
             candidates: list[dict[str, Any]]
+            did_rerank = False
             if self.hybrid_search and self.bm25_retriever is not None:
                 dense_docs = self.chroma_store.similarity_search(query, k=self.fetch_k)
                 dense_results = self._docs_to_dicts(dense_docs)
@@ -312,16 +313,22 @@ class DocumentRetrievalService:
                 )
                 if self.reranker is not None:
                     candidates = self.reranker.rerank(query, candidates)
+                    did_rerank = True
             elif self.reranker is not None:
                 docs = self.chroma_store.similarity_search(query, k=self.fetch_k)
                 candidates = self._docs_to_dicts(docs)
                 candidates = self.reranker.rerank(query, candidates)
+                did_rerank = True
             else:
                 scored_docs = self.chroma_store.similarity_search_with_scores(query, k=self.fetch_k)
                 candidates = self._docs_to_dicts(
                     [doc for doc, _score in scored_docs],
                     [score for _doc, score in scored_docs],
                 )
+
+            if did_rerank:
+                for doc in candidates:
+                    doc["reranked"] = True
 
             result = self._select_with_authority_bias(candidates)
             logger.info("Retrieved %d documents", len(result))

@@ -127,8 +127,8 @@ class Parser:
     def _build_tree(self, html_content: str) -> Any:
         parser = html.HTMLParser()
         if html_content.startswith("<?xml"):
-            return html.fromstring(html_content.encode("utf-8"), parser=parser)  # type: ignore[reportUnknownMemberType]
-        return html.fromstring(html_content, parser=parser)  # type: ignore[reportUnknownMemberType]
+            return html.fromstring(html_content.encode("utf-8"), parser=parser)
+        return html.fromstring(html_content, parser=parser)
 
     def _parse_html(self, html_content: str) -> tuple[str, str]:
         title = "Untitled"
@@ -161,7 +161,7 @@ class Parser:
             elif parser_config.fallback_to_body:
                 body_result = tree.xpath("//body")
                 content_html = (
-                    html.tostring(body_result[0], encoding="unicode", pretty_print=True)  # type: ignore[index]
+                    html.tostring(body_result[0], encoding="unicode", pretty_print=True)
                     if body_result
                     else html_content
                 )
@@ -200,7 +200,7 @@ class Parser:
         if not self.current_base_url:
             return html_content
         try:
-            tree: Any = html.fromstring(html_content)  # type: ignore[reportUnknownMemberType]
+            tree: Any = html.fromstring(html_content)
             href_prefixes = ("http://", "https://", "//", "mailto:", "#", "tel:")
             src_prefixes = ("http://", "https://", "//", "data:")
             for element in tree.iter(tag="*"):
