@@ -1,26 +1,75 @@
 # NagrikAI
 
-AI-powered Indian GST assistant using a RAG pipeline over official sources.
+AI-powered Indian Business Compliance & Advisory Agent.
+
+## Vision
+
+Evolve from a GST RAG chatbot into a **Business Compliance & Advisory Agent** that diagnoses business problems, gathers missing facts, reasons over them, retrieves evidence, and produces actionable plans.
+
+> **RAG answers questions. An agent diagnoses a business problem, gathers missing facts, reasons over them, retrieves evidence, and produces an actionable plan.**
 
 ### Why NagrikAI
 
-- **Official source fidelity** – Crawls only authoritative Indian government sites (india.gov.in, gst.gov.in, tutorial.gst.gov.in) ensuring accurate, up-to-date information
-- **Hybrid retrieval** – Combines BM25 keyword search with BGE-M3 embeddings and BGE-Reranker-Large reranking for precise, relevant results
-- **Transparent reasoning** – Every answer includes verifiable citations tracing back to specific source documents
-- **Fallback resilience** – When RAG yields insufficient context, automatically falls back to web search with LLM synthesis
-- **Local-first design** – Defaults to Ollama for fully private, offline-capable operation; OpenRouter available for cloud LLMs
-- **Observability built-in** – Full LangSmith tracing for monitoring, debugging, and continuous improvement
-- **Type-safe foundation** – Built on Python 3.14 with Pydantic, MyPy, and Ruff for robust, maintainable code
-- **Modular architecture** – Clean separation of crawling, parsing, vectorization, retrieval, and generation concerns
+```
+                    Business Owner
+                         │
+                         ▼
+                ┌─────────────────┐
+                │ Business Agent  │
+                │   Orchestrator  │
+                └────────┬────────┘
+                         │
+          ┌──────────────┼──────────────┐
+          ▼              ▼              ▼
+     Problem         Business        Knowledge
+     Detection       Context         Retrieval
+          │              │              │
+          ▼              ▼              ▼
+   ┌──────────┐   ┌─────────────┐ ┌──────────────┐
+   │ GST RAG  │   │ User/Business│ │ Gov / Legal  │
+   │          │   │ Profile      │ │ Documents    │
+   └──────────┘   └─────────────┘ └──────────────┘
+          │              │              │
+          └──────────────┼──────────────┘
+                         ▼
+                  ┌─────────────┐
+                  │ Reasoning / │
+                  │ Planning    │
+                  └──────┬──────┘
+                         ▼
+                  ┌─────────────┐
+                  │ Action Plan │
+                  └─────────────┘
+```
 
-### No embeddings storage, on purpose
+## Problem Domains
 
-Unlike many RAG systems that store dense vector embeddings permanently, NagrikAI computes embeddings during the vectorization phase and stores only the BM25 index and document metadata in ChromaDB. Embeddings are generated on-demand during retrieval using sentence-transformers. This approach:
+### 1. GST & Taxation
 
-- Eliminates storage overhead of high-dimensional vectors (BGE-M3 uses 1024-dim vectors)
-- Avoids embedding staleness when models are updated
-- Simplifies the pipeline – update the embedding model by re-running vectorization
-- Reduces complexity while maintaining retrieval quality through hybrid search
+- GST registration, composition scheme, input tax credit, GST returns
+- E-invoicing, e-way bills, HSN/SAC, reverse charge
+- GST notices, registration amendments, cancellation, refunds
+
+### 2. Business Registration & Government Compliance
+
+- MCA, Udyam, Income Tax, GST, Shops & Establishments
+- EPFO, ESIC, FSSAI, DGFT, state-specific registrations, local licenses
+
+### 3. Business Decision Support
+
+- Revenue/margin analysis, hiring affordability, EMI calculations
+- Tools: `calculator`, `financial_analysis`, `tax_calculator`
+
+### 4. Government Scheme Discovery
+
+- Subsidies, incentives, loans, and schemes based on industry, location, company size, investment, employment
+
+### 5. Compliance Calendar
+
+- GST: GSTR-1, GSTR-3B, Annual return
+- Income Tax: Advance tax
+- MCA: AOC-4, MGT-7
+- Labour: PF, ESIC
 
 ### Bounded context, on purpose
 
