@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.graph.state import CompiledStateGraph
 
-from nagrik_ai.agent._testing import adapt_to_rag_result
 from nagrik_ai.agent.agent_graph import create_agent_graph
 from nagrik_ai.agent.agent_nodes import (
     decide_tool_node,
@@ -16,12 +16,19 @@ from nagrik_ai.agent.agent_nodes import (
 )
 from nagrik_ai.agent.nodes import (
     build_context_node,
+    classify_node,
     generate_node,
     rerank_node,
+    response_token_budget,
     retrieve_node,
     validate_node,
 )
-from nagrik_ai.agent.rag_graph import create_rag_graph
+from nagrik_ai.agent.rag_graph import build_initial_state, create_rag_graph
+from nagrik_ai.config.config_models import (
+    MAX_RESPONSE_TOKENS,
+    MAX_RESPONSE_TOKENS_DETAILED,
+    MAX_RESPONSE_TOKENS_HARD,
+)
 from nagrik_ai.models.agent_state import AgentState
 from nagrik_ai.models.rag_result import RAGResult
 from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
@@ -40,6 +47,7 @@ def test_rag_graph_compiles() -> None:
         system_prompt="test",
     )
     assert isinstance(graph, CompiledStateGraph)
+    assert "classify" in graph.nodes
     assert "retrieve" in graph.nodes
     assert "rerank" in graph.nodes
     assert "build_context" in graph.nodes
@@ -65,6 +73,7 @@ def test_rag_graph_mermaid_output() -> None:
     mermaid = graph.get_graph().draw_mermaid()
     assert isinstance(mermaid, str)
     assert len(mermaid) > 0
+    assert "classify" in mermaid
     assert "retrieve" in mermaid
     assert "validate" in mermaid
 
@@ -130,6 +139,61 @@ def test_retrieve_node() -> None:
     assert len(result["documents"]) == 1
     assert result["metadata"]["retrieved_count"] == 1
     mock_retrieval.retrieve.assert_called_once_with("test query")
+
+
+def test_classify_node() -> None:
+    state: AgentState = {
+        "query": "How to file GSTR-1?",
+        "rewritten_queries": [],
+        "documents": [],
+        "candidate_answers": [],
+        "answer": None,
+        "confidence": None,
+        "citations": [],
+        "errors": [],
+        "metadata": {"existing": "kept"},
+        "tool_calls": [],
+        "tool_results": [],
+        "current_tool": None,
+        "session_id": None,
+        "user_id": None,
+        "trace_id": None,
+        "context": None,
+        "retrieval_config": {},
+        "messages": [],
+    }
+    result = classify_node(state)
+    metadata = result["metadata"]
+    assert metadata["existing"] == "kept"
+    assert metadata["verbosity"] == "detailed"
+    assert metadata["question_type"] == "PROCEDURAL"
+
+
+def test_classify_node_defaults() -> None:
+    state: AgentState = {
+        "query": "What is the due date for GSTR-3B?",
+        "rewritten_queries": [],
+        "documents": [],
+        "candidate_answers": [],
+        "answer": None,
+        "confidence": None,
+        "citations": [],
+        "errors": [],
+        "metadata": {},
+        "tool_calls": [],
+        "tool_results": [],
+        "current_tool": None,
+        "session_id": None,
+        "user_id": None,
+        "trace_id": None,
+        "context": None,
+        "retrieval_config": {},
+        "messages": [],
+    }
+    result = classify_node(state)
+    metadata = result["metadata"]
+    assert metadata["verbosity"] == "concise"
+    assert metadata["question_type"] == "FACTUAL"
 
 
 def test_rerank_node_no_reranker() -> None:
@@ -215,6 +279,239 @@ def test_build_context_node() -> None:
     assert len(result["citations"]) > 0
     context = result.get("context", "")
     assert "GST" in context or "Content" in context
+
+
+def test_build_context_rank_citations_by_authority() -> None:
+    """Higher-authority sources (Rule) must get a lower citation_id than a FAQ."""
+    state: AgentState = {
+        "query": "test query",
+        "rewritten_queries": [],
+        "documents": [
+            {
+                "content": "GST FAQ answer text.",
+                "metadata": {
+                    "source_id": "faq_1",
+                    "title": "FAQs_GST",
+                    "url": "https://gst.gov.in/faq",
+                    "domain": "gst.gov.in",
+                    "chunk_index": 0,
+                    "total_chunks": 1,
+                },
+                "score": 0.95,
+            },
+            {
+                "content": "Relevant GST Rule text.",
+                "metadata": {
+                    "source_id": "rule_1",
+                    "title": "GST Rules",
+                    "url": "https://gst.gov.in/rules",
+                    "domain": "gst.gov.in",
+                    "chunk_index": 0,
+                    "total_chunks": 1,
+                },
+                "score": 0.90,
+            },
+        ],
+        "candidate_answers": [],
+        "answer": None,
+        "confidence": None,
+        "citations": [],
+        "errors": [],
+        "metadata": {},
+        "tool_calls": [],
+        "tool_results": [],
+        "current_tool": None,
+        "session_id": None,
+        "user_id": None,
+        "trace_id": None,
+        "context": None,
+        "retrieval_config": {},
+        "messages": [],
+    }
+    result = build_context_node(state)
+    citations = result["citations"]
+    assert [c["citation_id"] for c in citations] == [1, 2]
+    assert citations[0]["source_id"] == "rule_1"
+    assert citations[1]["source_id"] == "faq_1"
+    context = result["context"]
+    assert context.index("[1]") < context.index("[2]")
+
+
+def test_build_context_citation_order_is_deterministic() -> None:
+    """Same authority + same score must tie-break lexicographically (URL, then title)."""
+
+    def _doc(source_id: str, url: str, title: str) -> dict[str, Any]:
+        return {
+            "content": f"{source_id} content.",
+            "metadata": {
+                "source_id": source_id,
+                "title": title,
+                "url": url,
+                "domain": "gst.gov.in",
+                "chunk_index": 0,
+                "total_chunks": 1,
+            },
+            "score": 0.90,
+        }
+
+    state: AgentState = {
+        "query": "test query",
+        "rewritten_queries": [],
+        "documents": [
+            _doc("rule_b", "https://gst.gov.in/rules-z", "GST Rules Z"),
+            _doc("rule_a", "https://gst.gov.in/rules-a", "GST Rules A"),
+        ],
+        "candidate_answers": [],
+        "answer": None,
+        "confidence": None,
+        "citations": [],
+        "errors": [],
+        "metadata": {},
+        "tool_calls": [],
+        "tool_results": [],
+        "current_tool": None,
+        "session_id": None,
+        "user_id": None,
+        "trace_id": None,
+        "context": None,
+        "retrieval_config": {},
+        "messages": [],
+    }
+    result = build_context_node(state)
+    citations = result["citations"]
+    assert [c["citation_id"] for c in citations] == [1, 2]
+    assert citations[0]["source_id"] == "rule_a"
+    assert citations[1]["source_id"] == "rule_b"
+
+
+def test_build_context_merges_chunks_per_source() -> None:
+    """All chunks of the same source must appear under ONE merged context block."""
+    state: AgentState = {
+        "query": "gst registration threshold",
+        "rewritten_queries": [],
+        "documents": [
+            {
+                "content": "chunk zero content.",
+                "metadata": {
+                    "source_id": "guide_1",
+                    "source_type": "user_guide",
+                    "title": "GST Registration Guide",
+                    "url": "https://gst.gov.in/registration-guide",
+                    "domain": "gst.gov.in",
+                    "chunk_index": 0,
+                    "total_chunks": 2,
+                },
+                "score": 0.9,
+            },
+            {
+                "content": "chunk one content.",
+                "metadata": {
+                    "source_id": "guide_1",
+                    "source_type": "user_guide",
+                    "title": "GST Registration Guide",
+                    "url": "https://gst.gov.in/registration-guide",
+                    "domain": "gst.gov.in",
+                    "chunk_index": 1,
+                    "total_chunks": 2,
+                },
+                "score": 0.8,
+            },
+            {
+                "content": "faq content.",
+                "metadata": {
+                    "source_id": "faq_1",
+                    "source_type": "faq",
+                    "title": "GST FAQ",
+                    "url": "https://gst.gov.in/faq/registration",
+                    "domain": "gst.gov.in",
+                    "chunk_index": 0,
+                    "total_chunks": 1,
+                },
+                "score": 0.95,
+            },
+        ],
+        "candidate_answers": [],
+        "answer": None,
+        "confidence": None,
+        "citations": [],
+        "errors": [],
+        "metadata": {},
+        "tool_calls": [],
+        "tool_results": [],
+        "current_tool": None,
+        "session_id": None,
+        "user_id": None,
+        "trace_id": None,
+        "context": None,
+        "retrieval_config": {},
+        "messages": [],
+    }
+    result = build_context_node(state)
+    citations = result["citations"]
+    assert len(citations) == 2, "Two distinct sources, even with multiple chunks"
+    assert {c["source_id"] for c in citations} == {"guide_1", "faq_1"}
+    assert [c["citation_id"] for c in citations] == [1, 2]
+
+    context = result["context"]
+    assert context.count("[1]") == 1, "Source must appear once per merged block"
+    assert context.count("[2]") == 1
+    assert "Chunk 0:\nchunk zero content." in context
+    assert "Chunk 1:\nchunk one content." in context
+    assert "Chunk 0:\nfaq content." in context
+
+
+def test_build_context_merged_block_preserves_lock() -> None:
+    """Citation IDs set in the merged context must match the returned citations list."""
+    state: AgentState = {
+        "query": "test query",
+        "rewritten_queries": [],
+        "documents": [
+            {
+                "content": "first chunk.",
+                "metadata": {
+                    "source_id": "doc_a",
+                    "title": "Doc A",
+                    "url": "https://example.com/doc-a",
+                    "domain": "example.com",
+                    "chunk_index": 0,
+                    "total_chunks": 2,
+                },
+                "score": 0.9,
+            },
+            {
+                "content": "second chunk.",
+                "metadata": {
+                    "source_id": "doc_a",
+                    "title": "Doc A",
+                    "url": "https://example.com/doc-a",
+                    "domain": "example.com",
+                    "chunk_index": 1,
+                    "total_chunks": 2,
+                },
+                "score": 0.85,
+            },
+        ],
+        "candidate_answers": [],
+        "answer": None,
+        "confidence": None,
+        "citations": [],
+        "errors": [],
+        "metadata": {},
+        "tool_calls": [],
+        "tool_results": [],
+        "current_tool": None,
+        "session_id": None,
+        "user_id": None,
+        "trace_id": None,
+        "context": None,
+        "retrieval_config": {},
+        "messages": [],
+    }
+    result = build_context_node(state)
+    assert len(result["citations"]) == 1
+    assert result["citations"][0]["citation_id"] == 1
+    assert len(result["documents"]) == 2
+    assert all(doc["citation_id"] == 1 for doc in result["documents"])
 
 
 def test_generate_node() -> None:
@@ -309,6 +606,128 @@ def test_validate_node_valid() -> None:
     result = validate_node(state)
     assert result["confidence"] == 0.8
     assert result["errors"] == []
+
+
+def _long_answer(word_count: int) -> str:
+    return " ".join(["word"] * word_count) + " [1]"
+
+
+def test_validate_node_length_guard_concise_overshoot() -> None:
+    state: AgentState = {
+        "query": "What is the due date for GSTR-3B?",
+        "rewritten_queries": [],
+        "documents": [],
+        "candidate_answers": [],
+        "answer": _long_answer(600),
+        "confidence": None,
+        "citations": [
+            {
+                "citation_id": 1,
+                "source_id": "s1",
+                "title": "Title",
+                "url": "https://example.com",
+                "domain": "example.com",
+                "score": 0.9,
+                "snippet": "Snippet",
+                "chunk_index": 0,
+                "total_chunks": 1,
+            }
+        ],
+        "errors": [],
+        "metadata": {"verbosity": "concise"},
+        "tool_calls": [],
+        "tool_results": [],
+        "current_tool": None,
+        "session_id": None,
+        "user_id": None,
+        "trace_id": None,
+        "context": None,
+        "retrieval_config": {},
+        "messages": [],
+    }
+    result = validate_node(state)
+    assert result["confidence"] == 0.5
+    assert result["errors"] == []
+    assert result["metadata"]["length_warning"] is True
+    assert result["metadata"]["response_word_count"] == 601
+    assert result["citations_valid"] is True
+
+
+def test_validate_node_length_guard_concise_under_cap() -> None:
+    state: AgentState = {
+        "query": "What is the due date for GSTR-3B?",
+        "rewritten_queries": [],
+        "documents": [],
+        "candidate_answers": [],
+        "answer": _long_answer(100),
+        "confidence": None,
+        "citations": [
+            {
+                "citation_id": 1,
+                "source_id": "s1",
+                "title": "Title",
+                "url": "https://example.com",
+                "domain": "example.com",
+                "score": 0.9,
+                "snippet": "Snippet",
+                "chunk_index": 0,
+                "total_chunks": 1,
+            }
+        ],
+        "errors": [],
+        "metadata": {"verbosity": "concise"},
+        "tool_calls": [],
+        "tool_results": [],
+        "current_tool": None,
+        "session_id": None,
+        "user_id": None,
+        "trace_id": None,
+        "context": None,
+        "retrieval_config": {},
+        "messages": [],
+    }
+    result = validate_node(state)
+    assert result["confidence"] == 0.8
+    assert "length_warning" not in result["metadata"]
+    assert result["metadata"]["response_word_count"] == 101
+
+
+def test_validate_node_length_guard_detailed_not_penalized() -> None:
+    state: AgentState = {
+        "query": "How to file GSTR-1?",
+        "rewritten_queries": [],
+        "documents": [],
+        "candidate_answers": [],
+        "answer": _long_answer(900),
+        "confidence": None,
+        "citations": [
+            {
+                "citation_id": 1,
+                "source_id": "s1",
+                "title": "Title",
+                "url": "https://example.com",
+                "domain": "example.com",
+                "score": 0.9,
+                "snippet": "Snippet",
+                "chunk_index": 0,
+                "total_chunks": 1,
+            }
+        ],
+        "errors": [],
+        "metadata": {"verbosity": "detailed"},
+        "tool_calls": [],
+        "tool_results": [],
+        "current_tool": None,
+        "session_id": None,
+        "user_id": None,
+        "trace_id": None,
+        "context": None,
+        "retrieval_config": {},
+        "messages": [],
+    }
+    result = validate_node(state)
+    assert result["confidence"] == 0.8
+    assert "length_warning" not in result["metadata"]
 
 
 def test_validate_node_no_sources() -> None:
@@ -695,6 +1114,62 @@ def test_rag_graph_invoke() -> None:
     assert len(final.get("citations", [])) > 0
 
 
+def test_rag_graph_injects_classification_into_prompt() -> None:
+    """The classify node must run first and feed verbosity/question_type into generation."""
+    mock_retrieval = MagicMock(spec=DocumentRetrievalService)
+    mock_retrieval.retrieve.return_value = [
+        {
+            "page_content": "GST is Goods and Services Tax",
+            "source_id": "doc1",
+            "title": "GST Guide",
+            "url": "https://example.com",
+            "domain": "example.com",
+            "chunk_index": 0,
+            "total_chunks": 1,
+            "score": 0.95,
+        }
+    ]
+
+    mock_llm = MagicMock(spec=BaseLLMService)
+    mock_llm.generate.return_value = "File GSTR-1 monthly. [1]"
+
+    graph = create_rag_graph(
+        retrieval_service=mock_retrieval,
+        llm_service=mock_llm,
+        system_prompt="You are a helpful assistant.",
+    )
+
+    initial: AgentState = {
+        "query": "How to file GSTR-1?",
+        "rewritten_queries": [],
+        "documents": [],
+        "candidate_answers": [],
+        "answer": None,
+        "confidence": None,
+        "citations": [],
+        "errors": [],
+        "metadata": {},
+        "tool_calls": [],
+        "tool_results": [],
+        "current_tool": None,
+        "session_id": None,
+        "user_id": None,
+        "trace_id": None,
+        "context": None,
+        "retrieval_config": {"top_k": 5, "reranker_enabled": False},
+        "messages": [],
+    }
+    final = graph.invoke(initial)
+    metadata = final.get("metadata", {})
+    assert metadata.get("verbosity") == "detailed"
+    assert metadata.get("question_type") == "PROCEDURAL"
+
+    prompt_arg = mock_llm.generate.call_args.args[0]
+    assert "VERBOSITY DIRECTIVE: detailed" in prompt_arg
+    assert "QUESTION TYPE: PROCEDURAL" in prompt_arg
+    assert "How to file GSTR-1?" in prompt_arg
+
+
 def test_agent_graph_tool_path() -> None:
     stub = StubLLMService(
         responses=[
@@ -959,13 +1434,77 @@ def test_agent_graph_persistence_across_graph_instances() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Section F: Equivalence — RAG graph vs orchestrator
+# Section F: Conditional flows — fallback & self-correction
 # ---------------------------------------------------------------------------
 
 
-def test_rag_graph_matches_orchestrator() -> None:
-    from nagrik_ai.services.rag_orchestrator import RAGOrchestrator
+def test_rag_graph_compiles_with_fallback() -> None:
+    graph = create_rag_graph(
+        retrieval_service=MagicMock(spec=DocumentRetrievalService),
+        llm_service=MagicMock(spec=BaseLLMService),
+        system_prompt="test",
+        enable_fallback=True,
+    )
+    assert isinstance(graph, CompiledStateGraph)
+    assert "web_search_fallback" in graph.nodes
 
+
+def test_rag_graph_compiles_with_self_correction() -> None:
+    graph = create_rag_graph(
+        retrieval_service=MagicMock(spec=DocumentRetrievalService),
+        llm_service=MagicMock(spec=BaseLLMService),
+        system_prompt="test",
+        enable_self_correction=True,
+    )
+    assert isinstance(graph, CompiledStateGraph)
+    assert "retry_generate" in graph.nodes
+
+
+def test_rag_graph_fallback_path() -> None:
+    """When citations are invalid and enable_fallback is True, graph routes to web_search_fallback."""
+    mock_retrieval = MagicMock(spec=DocumentRetrievalService)
+    mock_retrieval.retrieve.return_value = []
+
+    mock_llm = MagicMock(spec=BaseLLMService)
+    mock_llm.generate.return_value = "No information found in sources."
+
+    with patch("nagrik_ai.agent.rag_graph.web_search", return_value="Web result") as mock_web:
+        graph = create_rag_graph(
+            retrieval_service=mock_retrieval,
+            llm_service=mock_llm,
+            system_prompt="You are a helpful assistant.",
+            enable_fallback=True,
+        )
+
+        initial: AgentState = {
+            "query": "What is GST?",
+            "rewritten_queries": [],
+            "documents": [],
+            "candidate_answers": [],
+            "answer": None,
+            "confidence": None,
+            "citations": [],
+            "errors": [],
+            "metadata": {},
+            "tool_calls": [],
+            "tool_results": [],
+            "current_tool": None,
+            "session_id": None,
+            "user_id": None,
+            "trace_id": None,
+            "context": None,
+            "retrieval_config": {"top_k": 5, "reranker_enabled": False},
+            "messages": [],
+        }
+        final = graph.invoke(initial)
+        mock_web.assert_called_once()
+        answer = final.get("answer", "")
+        assert len(answer) > 0
+        assert "rag_result" in final
+
+
+def test_rag_graph_self_correction_path() -> None:
+    """When citations are invalid and enable_self_correction is True, graph retries generation."""
     mock_retrieval = MagicMock(spec=DocumentRetrievalService)
     mock_retrieval.retrieve.return_value = [
         {
@@ -977,23 +1516,242 @@ def test_rag_graph_matches_orchestrator() -> None:
             "chunk_index": 0,
             "total_chunks": 1,
             "score": 0.95,
+            "metadata": {
+                "source_id": "doc1",
+                "title": "GST Guide",
+                "url": "https://example.com",
+                "domain": "example.com",
+            },
         }
     ]
 
     mock_llm = MagicMock(spec=BaseLLMService)
-    mock_llm.generate.return_value = "GST is Goods and Services Tax."
+    mock_llm.generate.return_value = "Answer with invalid citation [99]"
 
-    orchestrator = RAGOrchestrator(
+    graph = create_rag_graph(
         retrieval_service=mock_retrieval,
         llm_service=mock_llm,
+        system_prompt="You are a helpful assistant.",
+        enable_self_correction=True,
+        max_retries=2,
     )
-    expected: RAGResult = orchestrator.query("What is GST?")
+
+    initial: AgentState = {
+        "query": "What is GST?",
+        "rewritten_queries": [],
+        "documents": [],
+        "candidate_answers": [],
+        "answer": None,
+        "confidence": None,
+        "citations": [
+            {
+                "citation_id": 1,
+                "source_id": "doc1",
+                "title": "GST Guide",
+                "url": "https://example.com",
+                "domain": "example.com",
+                "score": 0.95,
+                "snippet": "Content",
+                "chunk_index": 0,
+                "total_chunks": 1,
+            }
+        ],
+        "errors": [],
+        "metadata": {},
+        "tool_calls": [],
+        "tool_results": [],
+        "current_tool": None,
+        "session_id": None,
+        "user_id": None,
+        "trace_id": None,
+        "context": None,
+        "retrieval_config": {"top_k": 5, "reranker_enabled": False},
+        "messages": [],
+    }
+    final = graph.invoke(initial)
+    retry_count = final.get("metadata", {}).get("retry_count", 0)
+    assert retry_count > 0, "Self-correction should have incremented retry_count"
+
+
+def test_rag_graph_self_correction_exhausts_retries() -> None:
+    """When max_retries is reached, self-correction stops retrying and moves to finalize."""
+    mock_retrieval = MagicMock(spec=DocumentRetrievalService)
+    mock_retrieval.retrieve.return_value = [
+        {
+            "page_content": "GST is Goods and Services Tax",
+            "source_id": "doc1",
+            "title": "GST Guide",
+            "url": "https://example.com",
+            "domain": "example.com",
+            "chunk_index": 0,
+            "total_chunks": 1,
+            "score": 0.95,
+            "metadata": {
+                "source_id": "doc1",
+                "title": "GST Guide",
+                "url": "https://example.com",
+                "domain": "example.com",
+            },
+        }
+    ]
+
+    mock_llm = MagicMock(spec=BaseLLMService)
+    mock_llm.generate.return_value = "Answer with invalid citation [99]"
+
+    graph = create_rag_graph(
+        retrieval_service=mock_retrieval,
+        llm_service=mock_llm,
+        system_prompt="You are a helpful assistant.",
+        enable_self_correction=True,
+        max_retries=1,
+    )
+
+    initial: AgentState = {
+        "query": "What is GST?",
+        "rewritten_queries": [],
+        "documents": [],
+        "candidate_answers": [],
+        "answer": None,
+        "confidence": None,
+        "citations": [
+            {
+                "citation_id": 1,
+                "source_id": "doc1",
+                "title": "GST Guide",
+                "url": "https://example.com",
+                "domain": "example.com",
+                "score": 0.95,
+                "snippet": "Content",
+                "chunk_index": 0,
+                "total_chunks": 1,
+            }
+        ],
+        "errors": [],
+        "metadata": {},
+        "tool_calls": [],
+        "tool_results": [],
+        "current_tool": None,
+        "session_id": None,
+        "user_id": None,
+        "trace_id": None,
+        "context": None,
+        "retrieval_config": {"top_k": 5, "reranker_enabled": False},
+        "messages": [],
+    }
+    final = graph.invoke(initial)
+    retry_count = final.get("metadata", {}).get("retry_count", 0)
+    assert retry_count == 1, f"Expected 1 retry with max_retries=1, got {retry_count}"
+    assert "rag_result" in final
+
+
+def test_rag_graph_self_correction_success_on_retry() -> None:
+    """When retry generates valid citations, self-correction stops and proceeds to finalize."""
+    mock_retrieval = MagicMock(spec=DocumentRetrievalService)
+    mock_retrieval.retrieve.return_value = [
+        {
+            "page_content": "GST is Goods and Services Tax",
+            "source_id": "doc1",
+            "title": "GST Guide",
+            "url": "https://example.com",
+            "domain": "example.com",
+            "chunk_index": 0,
+            "total_chunks": 1,
+            "score": 0.95,
+            "metadata": {
+                "source_id": "doc1",
+                "title": "GST Guide",
+                "url": "https://example.com",
+                "domain": "example.com",
+            },
+        }
+    ]
+
+    mock_llm = MagicMock(spec=BaseLLMService)
+    mock_llm.generate.return_value = "GST is Goods and Services Tax. [1]"
+
+    graph = create_rag_graph(
+        retrieval_service=mock_retrieval,
+        llm_service=mock_llm,
+        system_prompt="You are a helpful assistant.",
+        enable_self_correction=True,
+        max_retries=2,
+    )
+
+    initial: AgentState = {
+        "query": "What is GST?",
+        "rewritten_queries": [],
+        "documents": [],
+        "candidate_answers": [],
+        "answer": None,
+        "confidence": None,
+        "citations": [
+            {
+                "citation_id": 1,
+                "source_id": "doc1",
+                "title": "GST Guide",
+                "url": "https://example.com",
+                "domain": "example.com",
+                "score": 0.95,
+                "snippet": "Content",
+                "chunk_index": 0,
+                "total_chunks": 1,
+            }
+        ],
+        "errors": [],
+        "metadata": {},
+        "tool_calls": [],
+        "tool_results": [],
+        "current_tool": None,
+        "session_id": None,
+        "user_id": None,
+        "trace_id": None,
+        "context": None,
+        "retrieval_config": {"top_k": 5, "reranker_enabled": False},
+        "messages": [],
+    }
+    final = graph.invoke(initial)
+    result = final.get("rag_result")
+    assert result is not None
+    assert result.citations_valid is True
+    assert "GST" in result.response
+
+
+# ---------------------------------------------------------------------------
+# Section G: Equivalence — RAG graph vs orchestrator
+# ---------------------------------------------------------------------------
+
+
+def test_rag_graph_produces_rag_result() -> None:
+    """Verify the RAG graph produces a RAGResult with the expected fields."""
+    mock_retrieval = MagicMock(spec=DocumentRetrievalService)
+    mock_retrieval.retrieve.return_value = [
+        {
+            "page_content": "GST is Goods and Services Tax",
+            "source_id": "doc1",
+            "title": "GST Guide",
+            "url": "https://example.com",
+            "domain": "example.com",
+            "chunk_index": 0,
+            "total_chunks": 1,
+            "score": 0.95,
+            "metadata": {
+                "source_id": "doc1",
+                "title": "GST Guide",
+                "url": "https://example.com",
+                "domain": "example.com",
+            },
+        }
+    ]
+
+    mock_llm = MagicMock(spec=BaseLLMService)
+    mock_llm.generate.return_value = "GST is Goods and Services Tax. [1]"
 
     graph = create_rag_graph(
         retrieval_service=mock_retrieval,
         llm_service=mock_llm,
         system_prompt="You are a helpful assistant.",
     )
+
     initial: AgentState = {
         "query": "What is GST?",
         "rewritten_queries": [],
@@ -1013,11 +1771,201 @@ def test_rag_graph_matches_orchestrator() -> None:
         "context": None,
         "retrieval_config": {"top_k": 5, "reranker_enabled": False},
         "messages": [],
+        "rag_result": None,
+        "_streaming_buffer": None,
+        "_streaming_callback": None,
     }
     final_state: dict[str, Any] = graph.invoke(initial)
 
-    actual = adapt_to_rag_result(final_state, query="What is GST?")  # type: ignore[arg-type]
+    result = final_state.get("rag_result")
+    assert result is not None
+    assert isinstance(result, RAGResult)
+    assert result.response.startswith("GST is Goods and Services Tax.")
+    assert result.citations_valid is True
 
-    assert actual.response == expected.response
-    assert len(actual.sources) >= 0
-    assert actual.citations_valid == expected.citations_valid
+
+# ---------------------------------------------------------------------------
+# Section H: Verbosity-aware token budget + truncation-aware retry
+# ---------------------------------------------------------------------------
+
+
+class _TruncationAwareLLM:
+    """Fake LLM that flips ``last_finish_reason`` across calls.
+
+    The first ``generate``/``generate_stream`` reports ``length`` (truncated), the
+    remaining calls report ``stop``. The initial response is deliberately cut off.
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.stream_buffers: list[list[str]] = []
+        self.last_finish_reason: str | None = None
+
+    def _bump(self) -> None:
+        self.calls += 1
+        self.last_finish_reason = "length" if self.calls == 1 else "stop"
+
+    def generate(self, prompt: str, system: str | None = None, max_tokens: int | None = None) -> str:
+        self._last_prompt = prompt
+        self._last_system = system
+        self._last_budget = max_tokens
+        self._bump()
+        if self.calls == 1:
+            return "The filing deadline for each month"
+        return "The filing deadline for each month is the 13th. [1]"
+
+    def generate_stream(
+        self, prompt: str, system: str | None = None, max_tokens: int | None = None
+    ) -> Any:
+        self._last_prompt = prompt
+        self._last_system = system
+        self._last_budget = max_tokens
+        tokens = ["The filing deadline ", "is the 13th. [1]"]
+        if self.calls == 0:
+            tokens = ["The filing dead"]
+        self._bump()
+        yield tokens[-1]
+
+    def chat(self, *_args: Any, **_kwargs: Any) -> Any:
+        return LLMResponse(content="Mong")
+
+
+def _retrieval_doc() -> list[dict[str, Any]]:
+    return [
+        {
+            "page_content": "IFF is filed quarterly. The due date is the 13th.",
+            "source_id": "doc1",
+            "title": "GST Guide",
+            "url": "https://example.com",
+            "domain": "example.com",
+            "chunk_index": 0,
+            "total_chunks": 1,
+            "score": 0.95,
+            "metadata": {
+                "source_id": "doc1",
+                "title": "GST Guide",
+                "url": "https://example.com",
+                "domain": "example.com",
+            },
+        }
+    ]
+
+
+def test_response_token_budget_scales_with_verbosity_and_retries() -> None:
+    assert response_token_budget({}) == MAX_RESPONSE_TOKENS
+    assert response_token_budget({"verbosity": "concise"}) == MAX_RESPONSE_TOKENS
+    assert response_token_budget({"verbosity": "detailed"}) == MAX_RESPONSE_TOKENS_DETAILED
+    assert response_token_budget({"verbosity": "concise", "retry_count": 1}) == min(
+        2 * MAX_RESPONSE_TOKENS, MAX_RESPONSE_TOKENS_HARD
+    )
+    assert response_token_budget({"verbosity": "detailed", "retry_count": 2}) == min(
+        4 * MAX_RESPONSE_TOKENS_DETAILED, MAX_RESPONSE_TOKENS_HARD
+    )
+
+
+def test_generate_node_passes_verbosity_aware_max_tokens() -> None:
+    mock_llm = MagicMock(spec=BaseLLMService)
+    mock_llm.generate.return_value = "Answer [1]"
+    state = build_initial_state(
+        query="What is GST?", retrieval_config={"top_k": 5, "reranker_enabled": False}
+    )
+    state["metadata"] = {"verbosity": "detailed", "question_type": "FACTUAL"}
+
+    generate_node(state, mock_llm, system_prompt="You are a tax assistant.")
+    _, kwargs = mock_llm.generate.call_args
+    assert kwargs["max_tokens"] == MAX_RESPONSE_TOKENS_DETAILED
+
+
+def test_rag_graph_truncation_retries_in_fallback_mode() -> None:
+    """A truncated (finish_reason=length) answer triggers a retry even without self-correction."""
+    mock_retrieval = MagicMock(spec=DocumentRetrievalService)
+    mock_retrieval.retrieve.return_value = _retrieval_doc()
+    mock_llm = _TruncationAwareLLM()
+
+    graph = create_rag_graph(
+        retrieval_service=mock_retrieval,
+        llm_service=mock_llm,
+        system_prompt="You are a helpful assistant.",
+        enable_fallback=True,
+        max_retries=2,
+    )
+
+    initial = build_initial_state(
+        query="What is the IFF filing deadline?",
+        retrieval_config={"top_k": 5, "reranker_enabled": False},
+    )
+    final = graph.invoke(initial)
+    retry_count = final.get("metadata", {}).get("retry_count", 0)
+    assert retry_count >= 1, "Truncated response should trigger a retry"
+    assert final.get("metadata", {}).get("truncated", False) is False
+    result = final.get("rag_result")
+    assert result is not None
+    assert "the 13th" in result.response
+
+
+def test_rag_graph_truncation_exhausts_retries_then_finalizes() -> None:
+    """When every attempt is truncated, the graph stops retrying and still finalizes."""
+    mock_retrieval = MagicMock(spec=DocumentRetrievalService)
+    mock_retrieval.retrieve.return_value = _retrieval_doc()
+
+    class _AlwaysTruncated:
+        def __init__(self) -> None:
+            self.last_finish_reason: str | None = "length"
+
+        def generate(self, prompt: str, system: str | None = None, max_tokens: int | None = None) -> str:
+            self._last_prompt = prompt
+            self._last_system = system
+            self._last_budget = max_tokens
+            return "Partial answer without a trailing citation."
+
+        def generate_stream(
+            self, prompt: str, system: str | None = None, max_tokens: int | None = None
+        ) -> Iterator[str]:
+            self._last_prompt = prompt
+            self._last_system = system
+            self._last_budget = max_tokens
+            yield "Partial answer without a trailing citation."
+
+        def chat(self, *_args: Any, **_kwargs: Any) -> Any:
+            return LLMResponse(content="Mong")
+
+    graph = create_rag_graph(
+        retrieval_service=mock_retrieval,
+        llm_service=_AlwaysTruncated(),
+        system_prompt="You are a helpful assistant.",
+        enable_fallback=True,
+        max_retries=2,
+    )
+
+    initial = build_initial_state(
+        query="What is the IFF filing deadline?",
+        retrieval_config={"top_k": 5, "reranker_enabled": False},
+    )
+    final = graph.invoke(initial)
+    assert final.get("metadata", {}).get("retry_count", 0) == 2
+    assert final.get("rag_result") is not None
+
+
+def test_streaming_retry_resets_stream_buffer() -> None:
+    """The streaming buffer only carries the retry's tokens, not the truncated first attempt."""
+    mock_retrieval = MagicMock(spec=DocumentRetrievalService)
+    mock_retrieval.retrieve.return_value = _retrieval_doc()
+    mock_llm = _TruncationAwareLLM()
+
+    graph = create_rag_graph(
+        retrieval_service=mock_retrieval,
+        llm_service=mock_llm,
+        system_prompt="You are a helpful assistant.",
+        enable_streaming=True,
+        enable_fallback=True,
+        max_retries=2,
+    )
+
+    initial = build_initial_state(
+        query="What is the IFF filing deadline?",
+        retrieval_config={"top_k": 5, "reranker_enabled": False},
+    )
+    final = graph.invoke(initial)
+    buffer = final.get("_streaming_buffer") or []
+    assert "The filing dead" not in buffer
+    assert any("is the 13th" in t for t in buffer)

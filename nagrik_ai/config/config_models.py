@@ -85,8 +85,11 @@ class EvaluationConfig(BaseModel):
     ragas_dataset: str = "nagrik-ai-golden"
     golden_dataset_path: str = "data/golden_dataset.jsonl"
     experiment_prefix: str = "rag-eval"
-    judge_llm_provider: str = _get_env("NAGRIKAI_JUDGE_LLM_PROVIDER", "openrouter")
-    judge_llm_model: str = _get_env("NAGRIKAI_JUDGE_LLM_MODEL", "anthropic/claude-3.5-sonnet")
+    judge_llm_provider: str = _get_env("NAGRIKAI_JUDGE_LLM_PROVIDER", "")
+    judge_llm_model: str = _get_env("NAGRIKAI_JUDGE_LLM_MODEL", "")
+    judge_llm_base_url: str = _get_env("NAGRIKAI_JUDGE_LLM_BASE_URL", "")
+    judge_llm_api_key: str = _get_env("NAGRIKAI_JUDGE_LLM_API_KEY", "")
+    judge_llm_temperature: float = _get_env_float("NAGRIKAI_JUDGE_LLM_TEMPERATURE", 0.0)
 
 
 class NagrikAIConfig(BaseModel):
@@ -164,5 +167,11 @@ LANGSMITH_API_KEY = EVAL_CONFIG.langsmith_api_key
 LANGSMITH_ENDPOINT = EVAL_CONFIG.langsmith_endpoint
 LANGSMITH_TRACING_ENABLED = EVAL_CONFIG.langsmith_tracing_enabled
 LANGSMITH_TRACE_VERBOSE = EVAL_CONFIG.langsmith_trace_verbose
+
+JUDGE_LLM_PROVIDER = EVAL_CONFIG.judge_llm_provider
+JUDGE_LLM_MODEL = EVAL_CONFIG.judge_llm_model
+JUDGE_LLM_BASE_URL = EVAL_CONFIG.judge_llm_base_url
+JUDGE_LLM_API_KEY = EVAL_CONFIG.judge_llm_api_key
+JUDGE_LLM_TEMPERATURE = EVAL_CONFIG.judge_llm_temperature
 
 del _defaults

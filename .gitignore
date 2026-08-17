@@ -23,6 +23,15 @@ venv/
 .env
 .env.local
 
+# Evaluation reports
+evaluation/results/
+
+# Deepeval cache/temp files
+.deepeval/
+
+# Checkpoint databases
+checkpoints/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -43,10 +43,12 @@ dev = [
     "mypy>=1.15,<2",
     "pyrefly>=0.1,<1",
     "prek>=0.2,<1",
+    "deepeval>=4,<5",
 ]
 
 [project.scripts]
 nagrik-ai = "nagrik_ai.cli:app"
+nagrik-eval = "evaluation.cli:app"
 
 [build-system]
 requires = ["hatchling>=1.27,<2"]
@@ -91,7 +93,7 @@ disallow_subclassing_any = true
 mypy_path = ["typings"]
 
 [[tool.mypy.overrides]]
-module = ["chromadb.*", "gradio.*", "sentence_transformers.*", "ollama.*"]
+module = ["chromadb.*", "gradio.*", "sentence_transformers.*", "ollama.*", "deepeval.*"]
 ignore_missing_imports = true
 
 [tool.pyright]
@@ -104,5 +106,6 @@ reportMissingImports = false
 dev = [
     "lxml-stubs>=0.5.1",
     "types-pyyaml>=6.0.12.20260518",
+    "deepeval>=4,<5",
 ]
 
