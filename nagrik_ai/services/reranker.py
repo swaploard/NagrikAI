@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 import torch
 
-from nagrik_ai.config.config_models import OPENROUTER_API_KEY, OPENROUTER_BASE_URL
+from nagrik_ai.config.config_models import OPENROUTER_API_KEY, OPENROUTER_BASE_URL, RERANKER_MODEL
 from nagrik_ai.services.tracing import LangSmithTracer, get_tracer
 
 logger = logging.getLogger(__name__)
@@ -81,11 +81,11 @@ class Reranker:
 
 
 class OpenRouterReranker(Reranker):
-    """Reranker backed by the OpenRouter rerank API (e.g. cohere/rerank-4-pro)."""
+    """Reranker backed by the OpenRouter rerank API (e.g. qwen/qwen3-reranker-8b)."""
 
     def __init__(
         self,
-        model_name: str = "cohere/rerank-4-pro",
+        model_name: str = RERANKER_MODEL,
         api_key: str = OPENROUTER_API_KEY,
         base_url: str = OPENROUTER_BASE_URL,
         tracer: LangSmithTracer | None = None,
