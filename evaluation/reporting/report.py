@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from statistics import fmean
 
-from evaluation.runners.rag_runner import RagCaseResult, RagEvalResult
+from evaluation.runners.rag_runner import RagCaseResult, RagEvalResult, aggregate_retrieval_ranking
 
 
 def write_report(result: RagEvalResult, output_dir: str | Path) -> tuple[Path, Path]:
@@ -51,12 +51,37 @@ def mean_overall_score(result: RagEvalResult) -> float:
     return fmean(scores) if scores else 0.0
 
 
+def aggregate_ranking_metrics(result: RagEvalResult) -> dict[str, dict[str, float]]:
+    """Per-ranking-metric aggregates: mean, min, max, and number of cases."""
+    values_by_metric: dict[str, list[float]] = {}
+    for case in result.cases:
+        for name, value in case.ranking_metrics.items():
+            if name == "ap" and case.ranking_metrics.get("num_relevant", 0.0) <= 0.0:
+                continue
+            output_name = "map" if name == "ap" else "mrr" if name == "rr" else name
+            values_by_metric.setdefault(output_name, []).append(value)
+    return {
+        name: {
+            "mean": fmean(values),
+            "min": min(values),
+            "max": max(values),
+            "cases": float(len(values)),
+        }
+        for name, values in values_by_metric.items()
+        if values
+    }
+
+
 def _to_json(result: RagEvalResult) -> str:
+    ranking_summary = aggregate_retrieval_ranking(result)
     payload: dict[str, object] = {
         "test_run_id": result.test_run_id,
         "judge_model": result.judge_model,
         "offline": result.offline,
         "aggregate": aggregate_metrics(result),
+        "aggregate_ranking": aggregate_ranking_metrics(result),
+        "mean_map": ranking_summary.get("map", 0.0),
+        "mean_mrr": ranking_summary.get("mrr", 0.0),
         "mean_overall_score": mean_overall_score(result),
         "cases": [
             {
@@ -66,6 +91,7 @@ def _to_json(result: RagEvalResult) -> str:
                 "expected_output": case.expected_output,
                 "latency_ms": case.latency_ms,
                 "retrieval_metrics": case.retrieval_metrics,
+                "ranking_metrics": case.ranking_metrics,
                 "metric_scores": [
                     {
                         "metric": score.metric,
@@ -113,6 +139,31 @@ def _aggregate_table(result: RagEvalResult) -> str:
             f"| {name} | {agg['mean']:.3f} | {agg['min']:.3f} | {agg['max']:.3f} "
             f"| {agg['pass_rate']:.0%} | {agg['cases']:.0f} |"
         )
+    rows.extend(["", "### Retrieval Ranking (mean over cases)", ""])
+    ranking = aggregate_ranking_metrics(result)
+    ranking_rows = ["| Metric | Mean | Min | Max | Cases |", "|---|---|---|---|---|"]
+    preferred = [
+        "map",
+        "mrr",
+        "ndcg@1",
+        "ndcg@3",
+        "ndcg@5",
+        "ndcg@10",
+        "precision@1",
+        "precision@3",
+        "precision@5",
+        "precision@10",
+        "recall@1",
+        "recall@3",
+        "recall@5",
+        "recall@10",
+    ]
+    for name in [metric for metric in preferred if metric in ranking]:
+        agg = ranking[name]
+        ranking_rows.append(
+            f"| {name} | {agg['mean']:.3f} | {agg['min']:.3f} | {agg['max']:.3f} | {agg['cases']:.0f} |"
+        )
+    rows.extend(ranking_rows)
     return "\n".join(rows)
 
 
@@ -123,6 +174,21 @@ def _case_block(case: RagCaseResult) -> list[str]:
         f"- **Latency:** {case.latency_ms:.1f} ms",
         f"- **Input:** {case.input}",
     ]
+    if case.ranking_metrics:
+        lines.extend(
+            [
+                "",
+                "| AP | RR | nDCG@5 | P@5 | R@5 |",
+                "|---|---|---|---|---|",
+                (
+                    f"| {case.ranking_metrics.get('ap', 0.0):.3f} | "
+                    f"{case.ranking_metrics.get('rr', 0.0):.3f} | "
+                    f"{case.ranking_metrics.get('ndcg@5', 0.0):.3f} | "
+                    f"{case.ranking_metrics.get('precision@5', 0.0):.3f} | "
+                    f"{case.ranking_metrics.get('recall@5', 0.0):.3f} |"
+                ),
+            ]
+        )
     if case.metric_scores:
         lines.extend(
             [

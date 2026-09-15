@@ -23,6 +23,7 @@ from deepeval.models import DeepEvalBaseLLM
 from deepeval.test_case import LLMTestCase, RetrievedContextData, SingleTurnParams
 
 from evaluation.datasets.loader import GoldenDatasetError, load_golden_dataset
+from evaluation.metrics.retrieval_ranking import aggregate_ranking_metrics, retrieval_ranking_metrics
 from evaluation.rubrics.loader import load_geval_criteria
 from nagrik_ai.agent.rag_graph import run_rag_query
 from nagrik_ai.factories import create_retrieval_service
@@ -65,6 +66,7 @@ class RagCaseResult:
     expected_output: str
     latency_ms: float
     retrieval_metrics: dict[str, Any]
+    ranking_metrics: dict[str, float] = field(default_factory=dict)
     retrieval_context: list[RetrievedContextData | str] = field(default_factory=list)
     context: list[str] = field(default_factory=list)
     metric_scores: list[MetricScore] = field(default_factory=list)
@@ -161,6 +163,12 @@ def run_rag_eval(
 
         docs = service.retrieve(query)
         deterministic = retrieval_metrics(docs)
+        metadata = golden.additional_metadata or {}
+        raw_relevant = metadata.get("_relevant_ids", set())
+        relevant_ids = set(raw_relevant) if isinstance(raw_relevant, (list, set, tuple)) else set()
+        raw_graded = metadata.get("_graded_map")
+        graded_map = raw_graded if isinstance(raw_graded, dict) else None
+        ranking = retrieval_ranking_metrics(docs, relevant_ids, graded_map=graded_map)
         result = run_rag_query(query, retrieval_service=service)
         cases.append(
             RagCaseResult(
@@ -170,6 +178,7 @@ def run_rag_eval(
                 expected_output=expected,
                 latency_ms=result.latency_ms,
                 retrieval_metrics=deterministic,
+                ranking_metrics=ranking,
                 retrieval_context=cast("list[RetrievedContextData | str]", result.raw_chunks),
                 context=result.raw_chunks,
             )
@@ -201,6 +210,11 @@ def run_rag_eval(
         judge_model=judge.get_model_name(),
         offline=False,
     )
+
+
+def aggregate_retrieval_ranking(result: RagEvalResult) -> dict[str, float]:
+    """Aggregate deterministic ranking metrics across evaluated cases."""
+    return aggregate_ranking_metrics([case.ranking_metrics for case in result.cases if case.ranking_metrics])
 
 
 def _attach_scores(eval_result: EvaluationResult, cases: list[RagCaseResult]) -> None:

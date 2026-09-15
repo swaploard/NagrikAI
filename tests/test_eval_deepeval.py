@@ -9,7 +9,7 @@ from deepeval.models import OllamaModel, OpenRouterModel
 
 from evaluation.datasets.loader import GoldenDatasetError, load_golden_dataset
 from evaluation.judges.factory import JudgeConfigError, create_eval_judge
-from evaluation.reporting.report import aggregate_metrics, mean_overall_score
+from evaluation.reporting.report import aggregate_metrics, aggregate_ranking_metrics, mean_overall_score
 from evaluation.rubrics.loader import load_geval_criteria
 from evaluation.runners.rag_runner import (
     DEFAULT_METRIC_THRESHOLDS,
@@ -45,6 +45,7 @@ class TestGoldenDatasetLoader:
         assert metadata["question_type"] == "eligibility"
         assert metadata["verbosity"] == "concise"
         assert metadata["expected_citations"] == ["1", "2"]
+        assert metadata["_relevant_ids"] == {"1", "2"}
 
     def test_missing_question_raises(self, tmp_path: Path) -> None:
         bad = tmp_path / "bad.jsonl"
@@ -127,6 +128,7 @@ class TestReportAggregates:
             expected_output="e",
             latency_ms=10.0,
             retrieval_metrics={},
+            ranking_metrics={"ap": 1.0, "rr": 1.0, "ndcg@5": 1.0, "num_relevant": 1.0},
             metric_scores=[
                 MetricScore(metric="faithfulness", score=0.8, threshold=0.5, success=True, reason="ok"),
                 MetricScore(metric="answer_relevancy", score=0.4, threshold=0.5, success=False, reason="bad"),
@@ -139,6 +141,7 @@ class TestReportAggregates:
             expected_output="e2",
             latency_ms=20.0,
             retrieval_metrics={},
+            ranking_metrics={"ap": 0.5, "rr": 0.5, "ndcg@5": 0.5, "num_relevant": 1.0},
             metric_scores=[
                 MetricScore(metric="faithfulness", score=0.6, threshold=0.5, success=True, reason="ok"),
             ],
@@ -160,3 +163,10 @@ class TestReportAggregates:
     def test_mean_overall_score_empty(self) -> None:
         result = RagEvalResult(cases=[], test_run_id=None, judge_model="j", offline=True)
         assert mean_overall_score(result) == 0.0
+
+    def test_aggregate_ranking_metrics(self) -> None:
+        result = self._sample_result()
+        aggregates = aggregate_ranking_metrics(result)
+        assert aggregates["map"]["mean"] == pytest.approx(0.75)
+        assert aggregates["mrr"]["mean"] == pytest.approx(0.75)
+        assert aggregates["ndcg@5"]["mean"] == pytest.approx(0.75)
