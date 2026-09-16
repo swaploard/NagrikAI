@@ -116,6 +116,12 @@ class NagrikAIConfig(BaseModel):
     max_response_tokens: int = _get_env_int("NAGRIKAI_MAX_RESPONSE_TOKENS", 4096)
     max_response_tokens_detailed: int = _get_env_int("NAGRIKAI_MAX_RESPONSE_TOKENS_DETAILED", 8192)
     max_response_tokens_hard: int = _get_env_int("NAGRIKAI_MAX_RESPONSE_TOKENS_HARD", 16384)
+    max_iterations: int = _get_env_int("NAGRIKAI_MAX_ITERATIONS", 5)
+    max_tool_calls: int = _get_env_int("NAGRIKAI_MAX_TOOL_CALLS", 7)
+    max_validation_retries: int = _get_env_int("NAGRIKAI_MAX_VALIDATION_RETRIES", 2)
+    max_observation_chars: int = _get_env_int("NAGRIKAI_MAX_OBSERVATION_CHARS", 4000)
+    agent_model: str = _get_env("NAGRIKAI_AGENT_MODEL", _get_env("NAGRIKAI_OLLAMA_MODEL", "qwen2.5:7b"))
+    business_profile_db: str = _get_env("NAGRIKAI_BUSINESS_PROFILE_DB", "checkpoints/business_profiles.db")
     authority_ranking_enabled: bool = _get_env_bool("NAGRIKAI_AUTHORITY_RANKING_ENABLED", True)
     authority_bonus: dict[str, float] = {
         "act": 0.08,
@@ -158,6 +164,12 @@ AUTHORITY_BONUS = dict(_defaults.authority_bonus)
 MAX_RESPONSE_TOKENS = _defaults.max_response_tokens
 MAX_RESPONSE_TOKENS_DETAILED = _defaults.max_response_tokens_detailed
 MAX_RESPONSE_TOKENS_HARD = _defaults.max_response_tokens_hard
+MAX_ITERATIONS = _defaults.max_iterations
+MAX_TOOL_CALLS = _defaults.max_tool_calls
+MAX_VALIDATION_RETRIES = _defaults.max_validation_retries
+MAX_OBSERVATION_CHARS = _defaults.max_observation_chars
+AGENT_MODEL = _defaults.agent_model
+BUSINESS_PROFILE_DB = Path(str(_defaults.business_profile_db))
 CHECKPOINT_DIR = Path(str(_defaults.checkpoint_dir))
 
 EVAL_CONFIG = EvaluationConfig()
