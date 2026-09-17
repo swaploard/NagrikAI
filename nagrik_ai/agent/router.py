@@ -11,13 +11,13 @@ from langchain_core.messages import HumanMessage
 from nagrik_ai.prompts.prompt_loader import load_prompt
 from nagrik_ai.services.llm_service import BaseLLMService, create_llm_service
 from nagrik_ai.tools.pdf_reader import read_pdf
-from nagrik_ai.tools.rag_tool import rag_search
+from nagrik_ai.tools.rag_tool import rag_search_with_sources
 from nagrik_ai.tools.web_search import web_search
 
 logger = logging.getLogger(__name__)
 
 TOOL_REGISTRY: dict[str, Any] = {
-    "rag_search": rag_search,
+    "rag_search": rag_search_with_sources,
     "web_search": web_search,
     "read_pdf": read_pdf,
 }
@@ -60,7 +60,7 @@ def run_agent(
     llm_service: BaseLLMService | None = None,
     thread_id: str | None = None,
 ) -> tuple[str, str]:
-    """Run the agent graph: decide, execute tool(s), synthesize answer.
+    """Run the bounded agent graph with evidence and answer validation.
 
     Args:
         query: The user's question.

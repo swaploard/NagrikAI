@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from nagrik_ai.models.tool_result import EvidencePolicy, ToolResult
 
 
@@ -34,20 +36,29 @@ class ToolSelectionPolicy:
 
     def resolve_evidence_policy(self, query: str, question_type: str | None = None) -> EvidencePolicy:
         text = f"{question_type or ''} {query}".lower()
-        if any(term in text for term in ("calculate", "calculator", "gst at", "interest", "penalty")):
-            return EvidencePolicy(
-                required_authority=None,
-                required_tools=frozenset({"calculator"}),
-                description="deterministic_calc",
+        calculation = question_type in {"deterministic_calc", "calculation"} or bool(
+            re.search(r"\b(calculate|calculator|gst at|emi|total)\b", text)
+        )
+        statutory = question_type in {"statutory_interpretation", "legal", "regulatory"} or bool(
+            re.search(
+                r"\b(act|rule|section|rate|threshold|eligibility|statutory|legal|regulatory|"
+                r"composition|registration|compliance|itc|gstr|iff)\b",
+                text,
             )
-        if any(term in text for term in ("act", "rule", "section", "rate", "threshold", "eligib")):
-            return EvidencePolicy(
-                required_authority="authoritative",
-                required_tools=frozenset({"rag_search"}),
-                forbidden_tools=frozenset({"web_search"}),
-                description="statutory_interpretation",
-            )
-        return EvidencePolicy(required_authority=None, description="operational_info")
+        )
+        tools: set[str] = set()
+        if calculation:
+            tools.add("calculator")
+        if statutory:
+            tools.add("rag_search")
+        return EvidencePolicy(
+            required_authority="authoritative" if statutory else None,
+            required_tools=frozenset(tools),
+            forbidden_tools=frozenset({"web_search"}) if statutory else frozenset(),
+            description="statutory_interpretation"
+            if statutory
+            else ("deterministic_calc" if calculation else "operational_info"),
+        )
 
     def check_forbidden_transition(
         self,

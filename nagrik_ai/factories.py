@@ -14,6 +14,8 @@ from langgraph.graph.state import CompiledStateGraph
 
 from nagrik_ai.agent.agent_graph import create_agent_graph as _build_agent_graph
 from nagrik_ai.agent.rag_graph import create_rag_graph as _build_rag_graph
+from nagrik_ai.agent.react_nodes import BusinessProfileReader
+from nagrik_ai.agent.tool_policy import ToolSelectionPolicy
 from nagrik_ai.config.config_manager import ConfigManager
 from nagrik_ai.config.config_models import (
     AUTHORITY_BONUS,
@@ -390,6 +392,8 @@ def create_agent_graph(
     llm_service: BaseLLMService | None = None,
     tracer: LangSmithTracer | None = None,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
+    business_profile_service: BusinessProfileReader | None = None,
+    tool_policy: ToolSelectionPolicy | None = None,
 ) -> CompiledStateGraph[AgentState, Any, Any, Any]:
     logger.info("Creating agent graph with wired dependencies")
     _tracer = tracer  # Reserved for future tracing integration
@@ -398,4 +402,6 @@ def create_agent_graph(
     return _build_agent_graph(
         llm_service=llm_service,
         checkpointer=checkpointer,
+        business_profile_service=business_profile_service,
+        tool_policy=tool_policy,
     )

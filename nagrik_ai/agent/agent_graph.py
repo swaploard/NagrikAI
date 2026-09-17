@@ -1,94 +1,92 @@
 from __future__ import annotations
 
-import logging
-from typing import Any, Literal
+from typing import Any
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.graph import END, StateGraph  # pyright: ignore[reportMissingTypeStubs]
-from langgraph.graph.state import CompiledStateGraph  # pyright: ignore[reportMissingTypeStubs]
+from langgraph.graph import END, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 
-from nagrik_ai.agent.agent_nodes import (
-    decide_tool_node,
+from nagrik_ai.agent.react_nodes import (
+    BusinessProfileReader,
+    budget_available,
     execute_tool_node,
-    fallback_web_search_node,
+    finalize_with_limitations_node,
+    initialize_node,
+    reason_node,
     synthesize_node,
 )
+from nagrik_ai.agent.tool_policy import ToolSelectionPolicy
+from nagrik_ai.agent.validation_nodes import validate_claims_node, validate_evidence_node
+from nagrik_ai.config.config_models import MAX_ITERATIONS, MAX_VALIDATION_RETRIES
 from nagrik_ai.models.agent_state import AgentState
 from nagrik_ai.services.llm_service import BaseLLMService
-
-logger = logging.getLogger(__name__)
-
-
-def _needs_fallback(state: AgentState) -> bool:
-    import re
-
-    tool_results = state.get("tool_results", [])
-    for result in tool_results:
-        output = result.get("output", "")
-        if not isinstance(output, str):
-            continue
-        if not output.strip():
-            return True
-        if re.search(
-            r"(?:could not|cannot|couldn't|unable to|no information|not found|not available)",
-            output,
-            re.IGNORECASE,
-        ):
-            return True
-        if "error" in result:
-            return True
-    return False
 
 
 def create_agent_graph(
     llm_service: BaseLLMService,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
+    business_profile_service: BusinessProfileReader | None = None,
+    tool_policy: ToolSelectionPolicy | None = None,
 ) -> CompiledStateGraph[AgentState, Any, Any, Any]:
+    policy = tool_policy or ToolSelectionPolicy()
     workflow: StateGraph[AgentState] = StateGraph(AgentState)
 
-    def wrapped_decide_tool(state: AgentState) -> dict[str, Any]:
-        return decide_tool_node(state, llm_service)
+    def initialize(state: AgentState) -> dict[str, Any]:
+        return initialize_node(state, policy, business_profile_service)
 
-    def wrapped_synthesize(state: AgentState) -> dict[str, Any]:
+    def reason(state: AgentState) -> dict[str, Any]:
+        return reason_node(state, llm_service, policy)
+
+    def execute(state: AgentState) -> dict[str, Any]:
+        return execute_tool_node(state, policy)
+
+    def validate_evidence(state: AgentState) -> dict[str, Any]:
+        return validate_evidence_node(state, policy)
+
+    def synthesize(state: AgentState) -> dict[str, Any]:
         return synthesize_node(state, llm_service)
 
-    def wrapped_fallback(state: AgentState) -> dict[str, Any]:
-        return fallback_web_search_node(state, llm_service)
+    def reason_route(state: AgentState) -> str:
+        return "execute" if state.get("tool_calls") else "validate_evidence"
 
-    workflow.add_node("decide_tool", wrapped_decide_tool)  # pyright: ignore[reportUnknownMemberType]
-    workflow.add_node("execute_tool", execute_tool_node)  # pyright: ignore[reportUnknownMemberType]
-    workflow.add_node("synthesize", wrapped_synthesize)  # pyright: ignore[reportUnknownMemberType]
-    workflow.add_node("fallback_web_search", wrapped_fallback)  # pyright: ignore[reportUnknownMemberType]
+    workflow.add_node("initialize", initialize)
+    workflow.add_node("reason", reason)
+    workflow.add_node("execute", execute)
+    workflow.add_node("validate_evidence", validate_evidence)
+    workflow.add_node("synthesize", synthesize)
+    workflow.add_node("validate_claims", validate_claims_node)
+    workflow.add_node("finalize_with_limitations", finalize_with_limitations_node)
+    workflow.set_entry_point("initialize")
+    workflow.add_edge("initialize", "reason")
+    workflow.add_conditional_edges(
+        "reason",
+        reason_route,
+        ["execute", "validate_evidence"],
+    )
+    workflow.add_edge("execute", "reason")
 
-    workflow.set_entry_point("decide_tool")
+    def validation_route(state: AgentState, success: str) -> str:
+        if not state.get("validation_errors"):
+            return success
+        if state.get("validation_retries", 0) < state.get("max_validation_retries", 0) and budget_available(state):
+            return "reason"
+        return "finalize_with_limitations"
 
-    def decide_tool_route(state: AgentState) -> Literal["execute_tool", "synthesize"]:
-        return "execute_tool" if state.get("current_tool") else "synthesize"
+    def evidence_route(state: AgentState) -> str:
+        return validation_route(state, "synthesize")
 
-    def execute_tool_route(state: AgentState) -> Literal["synthesize", "fallback_web_search"]:
-        return "fallback_web_search" if _needs_fallback(state) else "synthesize"
+    def claims_route(state: AgentState) -> str:
+        return validation_route(state, END)
 
     workflow.add_conditional_edges(
-        "decide_tool",
-        decide_tool_route,
-        {"execute_tool": "execute_tool", "synthesize": "synthesize"},
+        "validate_evidence",
+        evidence_route,
+        ["synthesize", "reason", "finalize_with_limitations"],
     )
-
-    workflow.add_conditional_edges(
-        "execute_tool",
-        execute_tool_route,
-        {"synthesize": "synthesize", "fallback_web_search": "fallback_web_search"},
+    workflow.add_edge("synthesize", "validate_claims")
+    workflow.add_conditional_edges("validate_claims", claims_route, [END, "reason", "finalize_with_limitations"])
+    workflow.add_edge("finalize_with_limitations", END)
+    # Allow configured budgets to finish through our terminal node before LangGraph's safety limit.
+    return workflow.compile(checkpointer=checkpointer).with_config(
+        recursion_limit=max(25, 2 * MAX_ITERATIONS + 4 * MAX_VALIDATION_RETRIES + 6)
     )
-
-    workflow.add_edge("synthesize", END)
-    workflow.add_edge("fallback_web_search", END)
-
-    app = workflow.compile(checkpointer=checkpointer)
-
-    try:
-        print("Agent Graph Mermaid Syntax:")
-        print(app.get_graph().draw_mermaid())
-    except Exception:
-        logger.warning("Could not print graph visualization", exc_info=True)
-
-    return app

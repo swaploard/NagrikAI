@@ -77,13 +77,14 @@ def rag_search_with_sources(query: str, session_id: str | None = None, user_id: 
         session_id=session_id,
         user_id=user_id,
     ) as span:
-        result = run_rag_query(query, session_id=session_id, user_id=user_id, tracer=tracer)
+        result = run_rag_query(query, session_id=session_id, user_id=user_id, tracer=tracer, enable_fallback=False)
 
         output: dict[str, Any] = {
             "response": result.response,
             "sources": [
                 {
                     "citation_id": s.citation_id,
+                    "source_id": s.source_id,
                     "title": s.title,
                     "url": s.url,
                     "domain": s.domain,
