@@ -42,7 +42,12 @@ def handle_pdf_upload(file: Any) -> tuple[str, str]:
     if file is None:
         return "", "No PDF uploaded."
     try:
-        text = read_pdf(file.name)
+        result = read_pdf(file.name)
+        if not result.ok:
+            return "", f"Error reading PDF: {result.error_message}"
+        if not isinstance(result.data, dict):
+            return "", "Error reading PDF: invalid document result."
+        text = str(result.data["document"]["text"])
         filename = Path(file.name).name
         status = f"Uploaded **{filename}** — {len(text)} characters extracted."
         return text, status

@@ -58,6 +58,23 @@
                 ],
                 "additionalProperties": false
             }
+        },
+        {
+            "name": "calculator",
+            "description": "Evaluate numeric arithmetic (+, -, *, /, %, **, parentheses). Use round(value, digits) for explicit rounding. Returns a canonical decimal result; never use for legal classification.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Arithmetic expression, e.g. 4200000 * 1 / 100 or round(50000 * 0.18 * 30 / 365, 2)."
+                    }
+                },
+                "required": [
+                    "query"
+                ],
+                "additionalProperties": false
+            }
         }
     ]
 }

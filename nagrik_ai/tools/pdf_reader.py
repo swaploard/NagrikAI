@@ -1,59 +1,61 @@
-"""PDF reader tool using pypdf."""
+"""Extract PDF evidence and preserve its document-level authority metadata."""
+
+from __future__ import annotations
 
 from pathlib import Path
 
 from pypdf import PdfReader
 
+from nagrik_ai.models.tool_result import SourceAuthority, ToolResult
+from nagrik_ai.tools.result_utils import failure, source_id, tool_result
+
 MAX_OUTPUT_CHARS = 50000
+MAX_FILE_BYTES = 25 * 1024 * 1024
 
 
-def read_pdf(file_path: str) -> str:
-    """
-    Read and extract text from a PDF file.
-
-    Args:
-        file_path: Path to the PDF file.
-
-    Returns:
-        Extracted text content (truncated to MAX_OUTPUT_CHARS).
-
-    Raises:
-        FileNotFoundError: If the PDF file does not exist.
-        ValueError: If the file is not a valid PDF or cannot be read.
-    """
+@tool_result
+def read_pdf(file_path: str) -> ToolResult:
     path = Path(file_path)
-
     if not path.exists():
-        raise FileNotFoundError(f"PDF file not found: {file_path}")
-
-    if not path.is_file():
-        raise ValueError(f"Path is not a file: {file_path}")
-
-    if path.suffix.lower() != ".pdf":
-        raise ValueError(f"File is not a PDF: {file_path}")
-
-    try:
-        reader = PdfReader(path)
-    except Exception as e:
-        raise ValueError(f"Failed to read PDF: {e!s}") from e
-
-    if len(reader.pages) == 0:
-        return "PDF contains no pages."
-
-    text_parts: list[str] = []
-    total_chars = 0
-
+        return failure("PDF file not found.", "NOT_FOUND")
+    if not path.is_file() or path.suffix.lower() != ".pdf":
+        return failure("Path must refer to a PDF file.")
+    if path.stat().st_size > MAX_FILE_BYTES:
+        return failure("PDF exceeds the 25 MB size limit.")
+    reader = PdfReader(path)
+    metadata = reader.metadata or {}
+    # Explicit document metadata only; titles and file names cannot establish authority.
+    declared = metadata.get("/SourceAuthority", metadata.get("/source_authority", "secondary"))
+    if declared not in {"authoritative", "secondary", "general_web"}:
+        return failure("Invalid PDF document authority metadata.")
+    authority: SourceAuthority = declared
+    parts: list[str] = []
+    count = 0
     for page in reader.pages:
-        text = page.extract_text()
-        if text:
-            text_parts.append(text)
-            total_chars += len(text)
-            if total_chars >= MAX_OUTPUT_CHARS:
-                break
-
-    full_text = "\n\n".join(text_parts)
-
-    if total_chars > MAX_OUTPUT_CHARS:
-        full_text = full_text[:MAX_OUTPUT_CHARS] + f"\n\n[Truncated at {MAX_OUTPUT_CHARS} characters]"
-
-    return full_text
+        text = page.extract_text() or ""
+        parts.append(text)
+        count += len(text) + 2
+        if count > MAX_OUTPUT_CHARS:
+            break
+    text = "\n\n".join(parts)[:MAX_OUTPUT_CHARS]
+    if not text.strip():
+        return failure("PDF contains no extractable text.", "NOT_FOUND")
+    sid = source_id("pdf", path.read_bytes())
+    document = {
+        "source_id": sid,
+        "source_authority": authority,
+        "source_type": metadata.get("/SourceType", "pdf"),
+        "text": text,
+    }
+    return ToolResult(
+        True,
+        {
+            "document": document,
+            "sources": [{"source_id": sid, "citation_id": 1, "title": str(metadata.get("/Title") or path.name)}],
+        },
+        None,
+        None,
+        authority,
+        None,
+        (sid,),
+    )

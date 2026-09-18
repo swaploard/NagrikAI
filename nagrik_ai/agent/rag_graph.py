@@ -147,8 +147,10 @@ def create_rag_graph(
             user_id=state.get("user_id"),
         ):
             web_result = web_search(query)
+            if not web_result.ok:
+                return {"errors": [*state.get("errors", []), web_result.error_message or "Web search failed."]}
             synthesis_prompt = (
-                f"Web search results:\n{web_result}\n\n"
+                f"Web search results:\n{web_result.data}\n\n"
                 f"Query: {query}\n\n"
                 f"Provide a comprehensive answer based on these search results."
             )

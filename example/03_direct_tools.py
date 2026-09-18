@@ -76,7 +76,14 @@ def demo_rag_search() -> dict[str, object]:
     query = "What is GST input tax credit?"
     print(f"Query: {query!r}\n")
 
-    result = rag_search_with_sources(query)
+    tool_result = rag_search_with_sources(query)
+    if not tool_result.ok:
+        print(tool_result.error_message)
+        return {}
+    result = tool_result.data
+    if not isinstance(result, dict):
+        print("Invalid RAG result: expected structured source data.")
+        return {}
 
     print("RESPONSE:")
     print(result["response"])
@@ -112,7 +119,8 @@ def demo_web_search() -> str:
     query = "FAQs on Mandatory Capture of Ship-to Field and Voluntary Closure of E-Way Bill, 2026"
     print(f"Query: {query!r}\n")
 
-    result = web_search(query)
+    tool_result = web_search(query)
+    result = str(tool_result.data if tool_result.ok else tool_result.error_message)
 
     print("RESULT:")
     print(result)
@@ -134,7 +142,11 @@ def demo_read_pdf(pdf_path: str | None = None) -> str:
             target = tmp.name
         print(f"Reading generated sample PDF: {target}\n")
 
-    result = read_pdf(target)
+    tool_result = read_pdf(target)
+    if tool_result.ok and isinstance(tool_result.data, dict):
+        result = str(tool_result.data["document"]["text"])
+    else:
+        result = tool_result.error_message or "Invalid PDF document result."
 
     preview = result[:500]
     print("EXTRACTED TEXT (first 500 chars):")

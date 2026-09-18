@@ -10,6 +10,7 @@ from langchain_core.messages import HumanMessage
 
 from nagrik_ai.prompts.prompt_loader import load_prompt
 from nagrik_ai.services.llm_service import BaseLLMService, create_llm_service
+from nagrik_ai.tools.calculator import calculator
 from nagrik_ai.tools.pdf_reader import read_pdf
 from nagrik_ai.tools.rag_tool import rag_search_with_sources
 from nagrik_ai.tools.web_search import web_search
@@ -20,6 +21,7 @@ TOOL_REGISTRY: dict[str, Any] = {
     "rag_search": rag_search_with_sources,
     "web_search": web_search,
     "read_pdf": read_pdf,
+    "calculator": calculator,
 }
 
 AGENT_SYSTEM_PROMPT = load_prompt("agent_system_prompt")

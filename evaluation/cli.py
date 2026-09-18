@@ -104,5 +104,34 @@ def validate_datasets(
     typer.echo(f"Dataset OK: {len(goldens)} cases loaded from {dataset}")
 
 
+agent_app = typer.Typer(name="agent", help="Bounded agent golden evaluation")
+app.add_typer(agent_app)
+
+
+@agent_app.command("run")
+def agent_run(
+    dataset: Annotated[Path, typer.Option("--dataset", "-d")] = Path("evaluation/datasets/agent/golden_agent.jsonl"),
+    limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
+    output_dir: Annotated[Path, typer.Option("--output-dir", "-o")] = DEFAULT_OUTPUT_DIR,
+) -> None:
+    """Run the real agent and report policy, budget, calculation and termination checks."""
+    import json
+
+    from evaluation.runners.agent_runner import run_agent_eval
+
+    try:
+        report = run_agent_eval(dataset, limit=limit)
+    except (OSError, ValueError, RuntimeError) as exc:
+        typer.echo(f"Agent evaluation failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / "agent_report.json"
+    path.write_text(json.dumps(report, indent=2) + "\n")
+    typer.echo(json.dumps(report["summary"], indent=2))
+    typer.echo(f"Report written: {path}")
+    if report["summary"]["execution_errors"]:
+        raise typer.Exit(1)
+
+
 if __name__ == "__main__":
     app()

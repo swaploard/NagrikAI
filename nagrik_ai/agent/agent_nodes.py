@@ -134,13 +134,18 @@ def fallback_web_search_node(state: AgentState, llm_service: BaseLLMService) -> 
     logger.info("RAG returned no useful answer; directly invoking web_search fallback")
 
     web_result = web_search(query)
+    if not web_result.ok:
+        return {
+            "answer": "I could not retrieve supporting web evidence.",
+            "errors": [web_result.error_message or "Web search failed."],
+        }
 
     synthesis_messages: list[dict[str, Any]] = [
         {"role": "user", "content": query},
         {
             "role": "user",
             "content": (
-                f"Web search results:\n{web_result}\n\n"
+                f"Web search results:\n{web_result.data}\n\n"
                 f"Please provide a comprehensive answer based on these search results."
             ),
         },
@@ -154,7 +159,7 @@ def fallback_web_search_node(state: AgentState, llm_service: BaseLLMService) -> 
             HumanMessage(content=query),
             HumanMessage(
                 content=(
-                    f"Web search results:\n{web_result}\n\n"
+                    f"Web search results:\n{web_result.data}\n\n"
                     f"Please provide a comprehensive answer based on these search results."
                 )
             ),
