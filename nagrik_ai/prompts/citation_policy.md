@@ -10,3 +10,11 @@ sources. Prefer authority in this order:
 Act -> Rules -> Notification -> Circular -> FAQ/manual
 
 Never invent citation numbers. Never cite sources that were not retrieved.
+
+CITATION_REQUIRED: Use the turn-wide citation mapping provided by the orchestrator.
+Each [n] must resolve through a stable source ID to successful tool evidence.
+Legal claims require an authoritative cited document, including document-derived
+PDF authority. A resolving citation establishes provenance, not semantic support.
+CALCULATION_TOOL_REQUIRED: Derived numeric claims must match the calculator's
+canonical decimal output. Deterministic computation is not documentary authority.
+Disclose claims that remain unsupported or indeterminate after validation.

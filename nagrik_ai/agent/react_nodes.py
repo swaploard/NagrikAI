@@ -23,6 +23,7 @@ from nagrik_ai.config.config_models import (
 )
 from nagrik_ai.models.agent_state import AgentState, AgentStep
 from nagrik_ai.models.tool_result import ErrorCode, SourceAuthority, ToolResult
+from nagrik_ai.services.citation_service import bind_tool_citations
 from nagrik_ai.services.llm_service import BaseLLMService, RateLimitError
 
 
@@ -78,6 +79,7 @@ def initialize_node(
         "agent_steps": [],
         "claim_verdicts": [],
         "validation_errors": [],
+        "missing_info": [],
         "tool_results": [],
         "tool_calls": [],
         "current_tool": None,
@@ -107,6 +109,8 @@ def _system_prompt(state: AgentState) -> str:
         "evidence_policy": asdict(evidence) if evidence else None,
         "observations": [s["observation_summary"] for s in state.get("agent_steps", [])],
         "validation_errors": state.get("validation_errors", []),
+        "missing_info": state.get("missing_info", []),
+        "citation_sources": state.get("citations", []),
     }
     return (
         AGENT_SYSTEM_PROMPT
@@ -199,6 +203,7 @@ def execute_tool_node(state: AgentState, tool_policy: ToolSelectionPolicy | None
     results = list(state.get("tool_results", []))
     messages = list(state.get("messages", []))
     count = state.get("tool_calls_count", 0)
+    citations = list(state.get("citations", []))
     schemas = {s["function"]["name"]: s["function"]["parameters"] for s in load_tool_schemas()}
     previous = next((s["action"] for s in reversed(steps) if s["tool_result"] is not None), None)
     for tc in state.get("tool_calls", []):
@@ -242,6 +247,7 @@ def execute_tool_node(state: AgentState, tool_policy: ToolSelectionPolicy | None
                         else:
                             result = failure(f"Tool failed ({type(exc).__name__}).")
         result = replace(result, latency_ms=(time.perf_counter() - start) * 1000)
+        result, citations = bind_tool_citations(result, citations)
         summary = json.dumps(asdict(result), default=str)[:MAX_OBSERVATION_CHARS]
         steps.append(step(name, summary, result, arguments))
         results.append({"tool_call_id": tc["id"], "name": name, "output": result})
@@ -249,6 +255,7 @@ def execute_tool_node(state: AgentState, tool_policy: ToolSelectionPolicy | None
         previous = name
     return {
         "tool_results": results,
+        "citations": citations,
         "messages": messages,
         "agent_steps": steps,
         "tool_calls_count": count,

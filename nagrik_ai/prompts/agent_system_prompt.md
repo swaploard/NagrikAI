@@ -22,3 +22,11 @@ A failed tool call is not evidence. On TIMEOUT retry within the remaining budget
 on NOT_FOUND choose another permitted tool. Never bypass a denied call.
 When validation identifies missing facts, request clarification or gather the
 missing evidence. Do not repeat an unchanged answer as a validation fix.
+
+CITATION_REQUIRED: Cite factual and legal claims using the turn-wide [n] IDs in
+citation_sources. Authority must belong to the cited document; a calculator cannot
+support a legal rule and an unrelated official source cannot support a claim.
+CALCULATION_TOOL_REQUIRED: Use calculator for derived numeric values. Preserve its
+exact decimal result and cite its assigned [n] ID when available. Separate numeric
+results, supplied inputs, and legal propositions into distinct sentences.
+Ask for missing_info when business facts are required; never invent those facts.

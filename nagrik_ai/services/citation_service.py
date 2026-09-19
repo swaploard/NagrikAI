@@ -3,9 +3,11 @@
 import html
 import re
 from collections import OrderedDict
+from dataclasses import replace
 from typing import Any
 
 from nagrik_ai.models.rag_result import SourceInfo
+from nagrik_ai.models.tool_result import ToolResult
 from nagrik_ai.utils.source_types import authority_rank, classify_source_type
 
 
@@ -137,6 +139,71 @@ def validate_citations(response: str, sources: list[SourceInfo]) -> bool:
     cited = set(map(int, re.findall(r"\[(\d+)\]", response)))
     valid_ids = {s.citation_id for s in sources}
     return cited.issubset(valid_ids) and len(cited) > 0
+
+
+def bind_tool_citations(result: ToolResult, citations: list[dict[str, Any]]) -> tuple[ToolResult, list[dict[str, Any]]]:
+    """Assign turn-wide IDs before observation, preserving stable tool provenance.
+
+    Tools number their own sources from one. Without rebinding, a second search's
+    [1] would silently refer to a different document. Never mutate a tool's data.
+    """
+    if not result.ok:
+        return result, citations
+    citations = list(citations)
+    known = {str(s["source_id"]): s["citation_id"] for s in citations}
+    sources = result.data.get("sources", []) if isinstance(result.data, dict) else result.data
+    if not isinstance(result.data, (dict, list)):
+        sources = []
+    if result.source_authority == "deterministic":
+        sources = [{"source_id": sid, "title": "Calculation"} for sid in result.source_ids]
+    if not isinstance(sources, list) or any(
+        not isinstance(source, dict) or source.get("source_id") not in result.source_ids for source in sources
+    ):
+        return replace(
+            result,
+            ok=False,
+            error_code="VALIDATION_ERROR",
+            error_message="Citation source is not linked to its tool result.",
+        ), citations
+    local_ids: dict[int, str] = {}
+    for source in sources:
+        cid = source.get("citation_id")
+        if cid is not None:
+            if type(cid) is not int or cid < 1 or (cid in local_ids and local_ids[cid] != source["source_id"]):
+                return replace(
+                    result,
+                    ok=False,
+                    error_code="VALIDATION_ERROR",
+                    error_message="Invalid or ambiguous tool citation ID.",
+                ), citations
+            local_ids[cid] = source["source_id"]
+    if (
+        isinstance(result.data, dict)
+        and isinstance(result.data.get("response"), str)
+        and any(int(cid) not in local_ids for cid in re.findall(r"\[(\d+)\]", result.data["response"]))
+    ):
+        return replace(
+            result, ok=False, error_code="VALIDATION_ERROR", error_message="Tool response cites an unknown source."
+        ), citations
+    remapping: dict[int, int] = {}
+    bound = []
+    for source in sources:
+        sid = source["source_id"]
+        if sid not in known:
+            known[sid] = max(known.values(), default=0) + 1
+            citations.append({**source, "citation_id": known[sid]})
+        bound.append({**source, "citation_id": known[sid]})
+        citation_id = source.get("citation_id")
+        if isinstance(citation_id, int):
+            remapping[citation_id] = known[sid]
+    if isinstance(result.data, dict):
+        data = {**result.data, "sources": bound}
+        if isinstance(data.get("response"), str):
+            data["response"] = re.sub(r"\[(\d+)\]", lambda m: f"[{remapping.get(int(m[1]), m[1])}]", data["response"])
+        result = replace(result, data=data)
+    elif isinstance(result.data, list):
+        result = replace(result, data=bound)
+    return result, citations
 
 
 def extract_snippet(text: str, query: str, max_len: int = 160) -> str:

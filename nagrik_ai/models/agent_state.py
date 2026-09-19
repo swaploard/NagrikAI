@@ -75,4 +75,5 @@ class AgentState(TypedDict):
     max_tool_calls: NotRequired[int]
     max_validation_retries: NotRequired[int]
     validation_errors: NotRequired[list[str]]
+    missing_info: NotRequired[list[str]]
     finalized_with_limitations: NotRequired[bool]

@@ -396,7 +396,6 @@ def create_agent_graph(
     tool_policy: ToolSelectionPolicy | None = None,
 ) -> CompiledStateGraph[AgentState, Any, Any, Any]:
     logger.info("Creating agent graph with wired dependencies")
-    _tracer = tracer  # Reserved for future tracing integration
     if llm_service is None:
         llm_service = create_llm_service()
     return _build_agent_graph(
@@ -404,4 +403,5 @@ def create_agent_graph(
         checkpointer=checkpointer,
         business_profile_service=business_profile_service,
         tool_policy=tool_policy,
+        tracer=tracer,
     )

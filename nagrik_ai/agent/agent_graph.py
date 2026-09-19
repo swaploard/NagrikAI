@@ -20,6 +20,7 @@ from nagrik_ai.agent.validation_nodes import validate_claims_node, validate_evid
 from nagrik_ai.config.config_models import MAX_ITERATIONS, MAX_VALIDATION_RETRIES
 from nagrik_ai.models.agent_state import AgentState
 from nagrik_ai.services.llm_service import BaseLLMService
+from nagrik_ai.services.tracing import LangSmithTracer
 
 
 def create_agent_graph(
@@ -27,6 +28,7 @@ def create_agent_graph(
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     business_profile_service: BusinessProfileReader | None = None,
     tool_policy: ToolSelectionPolicy | None = None,
+    tracer: LangSmithTracer | None = None,
 ) -> CompiledStateGraph[AgentState, Any, Any, Any]:
     policy = tool_policy or ToolSelectionPolicy()
     workflow: StateGraph[AgentState] = StateGraph(AgentState)
@@ -41,10 +43,13 @@ def create_agent_graph(
         return execute_tool_node(state, policy)
 
     def validate_evidence(state: AgentState) -> dict[str, Any]:
-        return validate_evidence_node(state, policy)
+        return validate_evidence_node(state, policy, tracer)
 
     def synthesize(state: AgentState) -> dict[str, Any]:
         return synthesize_node(state, llm_service)
+
+    def validate_claims(state: AgentState) -> dict[str, Any]:
+        return validate_claims_node(state, llm_service, tracer)
 
     def reason_route(state: AgentState) -> str:
         return "execute" if state.get("tool_calls") else "validate_evidence"
@@ -54,7 +59,7 @@ def create_agent_graph(
     workflow.add_node("execute", execute)
     workflow.add_node("validate_evidence", validate_evidence)
     workflow.add_node("synthesize", synthesize)
-    workflow.add_node("validate_claims", validate_claims_node)
+    workflow.add_node("validate_claims", validate_claims)
     workflow.add_node("finalize_with_limitations", finalize_with_limitations_node)
     workflow.set_entry_point("initialize")
     workflow.add_edge("initialize", "reason")
