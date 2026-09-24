@@ -60,8 +60,7 @@ def initialize_node(
     context = dict(state.get("business_context", {}))
     if profile_service is not None and state.get("user_id"):
         profile = profile_service.get_profile(cast(str, state["user_id"]))
-        if profile is not None:
-            context = dict(profile.model_dump() if hasattr(profile, "model_dump") else profile)
+        context = {} if profile is None else dict(profile.model_dump() if hasattr(profile, "model_dump") else profile)
     evidence_policy = None if completed else state.get("evidence_policy")
     return {
         "messages": messages,
@@ -91,7 +90,7 @@ def initialize_node(
         "context": None,
         "rag_result": None,
         "finalized_with_limitations": False,
-        "pending_profile_updates": None,
+        "pending_profile_updates": state.get("pending_profile_updates"),
         "metadata": {**state.get("metadata", {}), "agent_turn_completed": False},
     }
 

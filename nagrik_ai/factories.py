@@ -22,6 +22,7 @@ from nagrik_ai.config.config_models import (
     AUTHORITY_RANKING_ENABLED,
     BM25_B,
     BM25_K1,
+    BUSINESS_PROFILE_DB,
     CHECKPOINT_DIR,
     CHROMA_PERSIST_DIR,
     EMBEDDING_MODEL,
@@ -38,6 +39,7 @@ from nagrik_ai.config.config_models import (
 from nagrik_ai.models.agent_state import AgentState
 from nagrik_ai.models.rag_result import RAGResult
 from nagrik_ai.prompts.prompt_registry import CompiledPromptPipeline, load_default_prompt_pipeline
+from nagrik_ai.services.business_profile_service import BusinessProfileService
 from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
 from nagrik_ai.services.llm_service import BaseLLMService, create_llm_service
 from nagrik_ai.services.reranker import OpenRouterReranker, Reranker
@@ -388,6 +390,10 @@ def warmup(stack: AppStack) -> AppStack:
     return stack
 
 
+def create_business_profile_service(db_path: str | Path | None = None) -> BusinessProfileService:
+    return BusinessProfileService(db_path if db_path is not None else BUSINESS_PROFILE_DB)
+
+
 def create_agent_graph(
     llm_service: BaseLLMService | None = None,
     tracer: LangSmithTracer | None = None,
@@ -401,7 +407,9 @@ def create_agent_graph(
     return _build_agent_graph(
         llm_service=llm_service,
         checkpointer=checkpointer,
-        business_profile_service=business_profile_service,
+        business_profile_service=(
+            business_profile_service if business_profile_service is not None else create_business_profile_service()
+        ),
         tool_policy=tool_policy,
         tracer=tracer,
     )

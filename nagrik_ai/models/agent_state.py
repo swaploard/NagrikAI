@@ -68,6 +68,8 @@ class AgentState(TypedDict):
     evidence_policy: NotRequired[EvidencePolicy | None]
     business_context: NotRequired[dict[str, Any]]
     pending_profile_updates: NotRequired[dict[str, Any] | None]
+    user_confirmed: NotRequired[bool]
+    profile_update_result: NotRequired[ToolResult | None]
     iteration: NotRequired[int]
     tool_calls_count: NotRequired[int]
     validation_retries: NotRequired[int]

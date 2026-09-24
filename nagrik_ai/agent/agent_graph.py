@@ -6,6 +6,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from nagrik_ai.agent.profile_nodes import commit_profile_node
 from nagrik_ai.agent.react_nodes import (
     BusinessProfileReader,
     budget_available,
@@ -54,7 +55,11 @@ def create_agent_graph(
     def reason_route(state: AgentState) -> str:
         return "execute" if state.get("tool_calls") else "validate_evidence"
 
+    def commit_profile(state: AgentState) -> dict[str, Any]:
+        return commit_profile_node(state, business_profile_service)
+
     workflow.add_node("initialize", initialize)
+    workflow.add_node("commit_profile", commit_profile)
     workflow.add_node("reason", reason)
     workflow.add_node("execute", execute)
     workflow.add_node("validate_evidence", validate_evidence)
@@ -62,7 +67,8 @@ def create_agent_graph(
     workflow.add_node("validate_claims", validate_claims)
     workflow.add_node("finalize_with_limitations", finalize_with_limitations_node)
     workflow.set_entry_point("initialize")
-    workflow.add_edge("initialize", "reason")
+    workflow.add_edge("initialize", "commit_profile")
+    workflow.add_edge("commit_profile", "reason")
     workflow.add_conditional_edges(
         "reason",
         reason_route,

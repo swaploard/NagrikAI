@@ -61,6 +61,8 @@ def run_agent(
     query: str,
     llm_service: BaseLLMService | None = None,
     thread_id: str | None = None,
+    *,
+    user_id: str | None = None,
 ) -> tuple[str, str]:
     """Run the bounded agent graph with evidence and answer validation.
 
@@ -69,6 +71,7 @@ def run_agent(
         llm_service: Optional LLM service override.
         thread_id: Optional conversation thread ID for multi-turn. If None,
                    a new thread is created.
+        user_id: Stable host-provided identity for durable business facts; pass on every call.
 
     Returns:
         Tuple of (answer, thread_id). Use thread_id in subsequent calls to
@@ -102,7 +105,7 @@ def run_agent(
             "tool_results": [],
             "current_tool": None,
             "session_id": None,
-            "user_id": None,
+            "user_id": user_id,
             "trace_id": None,
             "context": None,
             "retrieval_config": {},
@@ -118,7 +121,7 @@ def run_agent(
         )
     else:
         final_state = agent_graph.invoke(
-            {"query": query},
+            {"query": query, "user_id": user_id, "business_context": {}},
             config={"configurable": {"thread_id": tid}},
         )
 
