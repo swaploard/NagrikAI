@@ -75,6 +75,106 @@
                 ],
                 "additionalProperties": false
             }
+        },
+        {
+            "name": "tax_calculator",
+            "description": "Compute GST liability, composition levy, or eligible ITC from supplied figures. Arithmetic only: verify the applicable rate and Section 10/16/17 eligibility with authoritative evidence first. Returns a canonical decimal string.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": [
+                            "gst_liability",
+                            "itc",
+                            "composition"
+                        ],
+                        "description": "Which GST arithmetic to perform."
+                    },
+                    "amount": {
+                        "type": "string",
+                        "description": "Taxable value or turnover for GST/composition; total input tax for ITC, in rupees."
+                    },
+                    "rate_percent": {
+                        "type": "string",
+                        "description": "Verified GST or composition rate as a percent; required except for ITC."
+                    },
+                    "eligible_itc": {
+                        "type": "string",
+                        "description": "Verified available ITC for gst_liability; default 0."
+                    },
+                    "blocked_itc": {
+                        "type": "string",
+                        "description": "Verified blocked portion for itc operation; default 0."
+                    }
+                },
+                "required": [
+                    "operation",
+                    "amount"
+                ],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "compliance_calendar",
+            "description": "Calculate standard GSTR-1, GSTR-3B, AOC-4, PF or ESIC due dates from official guidance. Returns a dated baseline and source, with a reminder to check extensions. For AOC-4 provide AGM date; quarterly GSTR-3B needs the principal-place state or UT.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "compliance": {
+                        "type": "string",
+                        "enum": [
+                            "gstr1",
+                            "gstr3b",
+                            "aoc4",
+                            "pf",
+                            "esic"
+                        ]
+                    },
+                    "period": {
+                        "type": "string",
+                        "description": "Tax or wage month YYYY-MM; quarter-end month YYYY-MM for quarterly GST; AGM date YYYY-MM-DD for AOC-4."
+                    },
+                    "filing_frequency": {
+                        "type": "string",
+                        "enum": [
+                            "monthly",
+                            "quarterly"
+                        ],
+                        "description": "GST filing frequency; defaults to monthly."
+                    },
+                    "state": {
+                        "type": "string",
+                        "description": "Principal-place state or UT, required for quarterly GSTR-3B."
+                    },
+                    "company_type": {
+                        "type": "string",
+                        "description": "AOC-4 company type; explicitly set ordinary for the standard rule."
+                    }
+                },
+                "required": [
+                    "compliance",
+                    "period"
+                ],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "scheme_discovery",
+            "description": "Find plausible MSME schemes using the host-provided business profile. Results are candidates requiring eligibility verification, with source links; this tool cannot establish statutory eligibility.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Describe the business support sought, e.g. new enterprise subsidy or quality certification."
+                    }
+                },
+                "required": [
+                    "query"
+                ],
+                "additionalProperties": false
+            }
         }
     ]
 }

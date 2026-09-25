@@ -11,8 +11,11 @@ from langchain_core.messages import HumanMessage
 from nagrik_ai.prompts.prompt_loader import load_prompt
 from nagrik_ai.services.llm_service import BaseLLMService, create_llm_service
 from nagrik_ai.tools.calculator import calculator
+from nagrik_ai.tools.compliance_calendar import compliance_calendar
 from nagrik_ai.tools.pdf_reader import read_pdf
 from nagrik_ai.tools.rag_tool import rag_search_with_sources
+from nagrik_ai.tools.scheme_discovery import scheme_discovery
+from nagrik_ai.tools.tax_calculator import tax_calculator
 from nagrik_ai.tools.web_search import web_search
 
 logger = logging.getLogger(__name__)
@@ -22,6 +25,9 @@ TOOL_REGISTRY: dict[str, Any] = {
     "web_search": web_search,
     "read_pdf": read_pdf,
     "calculator": calculator,
+    "tax_calculator": tax_calculator,
+    "compliance_calendar": compliance_calendar,
+    "scheme_discovery": scheme_discovery,
 }
 
 AGENT_SYSTEM_PROMPT = load_prompt("agent_system_prompt")

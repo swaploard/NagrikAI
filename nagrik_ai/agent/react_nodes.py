@@ -230,7 +230,10 @@ def execute_tool_node(state: AgentState, tool_policy: ToolSelectionPolicy | None
                     result = failure(f"Invalid arguments for {name}.")
                 else:
                     try:
-                        result = _normalize(TOOL_REGISTRY[name](**arguments), name, tc["id"])
+                        tool_arguments = dict(arguments)
+                        if name == "scheme_discovery":
+                            tool_arguments["business_context"] = state.get("business_context", {})
+                        result = _normalize(TOOL_REGISTRY[name](**tool_arguments), name, tc["id"])
                     except (TimeoutError, TimeoutException, RequestsTimeout):
                         result = failure("Tool timed out; retry within the remaining budget.", "TIMEOUT")
                     except FileNotFoundError:

@@ -108,6 +108,8 @@ def validate_evidence_node(
         errors = list(index.errors)
         if evidence:
             missing = evidence.required_tools - {s["action"] for s in successful}
+            if "calculator" in missing and any(s["action"] == "tax_calculator" for s in successful):
+                missing = missing - {"calculator"}
             if missing:
                 errors.append("Missing successful tools: " + ", ".join(sorted(missing)))
             if evidence.required_authority and not any(
