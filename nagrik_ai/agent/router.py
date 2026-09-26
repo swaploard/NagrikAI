@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable, Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from langchain_core.messages import HumanMessage
-
+from nagrik_ai.models.agent_state import AgentStep
+from nagrik_ai.models.tool_result import ToolResult
 from nagrik_ai.prompts.prompt_loader import load_prompt
 from nagrik_ai.services.llm_service import BaseLLMService, create_llm_service
 from nagrik_ai.tools.calculator import calculator
@@ -63,72 +65,107 @@ def _get_checkpointer() -> Any:
     return _checkpointer
 
 
+_ACTION_LABELS: dict[str, str] = {
+    "rag_search": "Searching GST guidance…",
+    "web_search": "Searching current information…",
+    "read_pdf": "Reading document…",
+    "calculator": "Calculating liability…",
+    "tax_calculator": "Calculating liability…",
+    "compliance_calendar": "Checking deadlines…",
+    "scheme_discovery": "Finding relevant schemes…",
+    "reason": "Choosing next action…",
+    "synthesize": "Preparing answer…",
+    "validate_evidence": "Checking evidence…",
+    "validate_claims": "Checking claims…",
+    "finalize_with_limitations": "Disclosing validation limits…",
+}
+
+
+def public_agent_step(step: AgentStep) -> AgentStep:
+    """Project internal observations to UI-safe progress, with no arguments or raw errors."""
+    result = step.get("tool_result")
+    action = step["action"] if step["action"] in _ACTION_LABELS else "action"
+    summary = "Searching fallback…" if result is not None and not result.ok else _ACTION_LABELS.get(action, "Working…")
+    public_result: ToolResult | None = None
+    if result is not None:
+        public_result = replace(result, data=None, error_message=None)
+    return {
+        "action": action,
+        "action_input": {},
+        "observation_summary": summary,
+        "timestamp_ms": step.get("timestamp_ms"),
+        "latency_ms": step.get("latency_ms"),
+        "tool_result": public_result,
+    }
+
+
+def stream_agent_from_graph(
+    graph: Any, query: str, thread_id: str | None = None, *, user_id: str | None = None
+) -> Iterator[dict[str, Any]]:
+    """Emit new steps once per turn, then the final answer after validation.
+
+    Node updates provide the same incremental buffering boundary as the RAG
+    streaming path. Draft answers and private conversation messages never leave it.
+    """
+    tid = thread_id or uuid4().hex
+    state: dict[str, Any] = {}
+    seen = 0
+    for update in graph.stream(
+        {"query": query, "user_id": user_id, "business_context": {}},
+        config={"configurable": {"thread_id": tid}},
+        stream_mode="updates",
+    ):
+        for node, output in update.items():
+            if not isinstance(output, dict):
+                continue
+            state.update(output)
+            if node == "initialize":
+                seen = 0
+            steps = output.get("agent_steps", [])
+            for step in steps[seen:]:
+                yield {"type": "agent_step", "data": public_agent_step(step), "thread_id": tid}
+            if "agent_steps" in output:
+                seen = len(steps)
+    yield {
+        "type": "final",
+        "thread_id": tid,
+        "data": {
+            "answer": state.get("answer") or "",
+            "citations": state.get("citations", []),
+            "citations_valid": state.get("citations_valid"),
+            "claim_verdicts": state.get("claim_verdicts", []),
+            "finalized_with_limitations": state.get("finalized_with_limitations", False),
+        },
+    }
+
+
+def run_agent_from_graph(
+    graph: Any,
+    query: str,
+    thread_id: str | None = None,
+    *,
+    user_id: str | None = None,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
+) -> tuple[str, str]:
+    answer, tid = "", thread_id or uuid4().hex
+    for event in stream_agent_from_graph(graph, query, tid, user_id=user_id):
+        if on_event is not None:
+            on_event(event)
+        if event["type"] == "final":
+            answer = event["data"]["answer"]
+    return answer, tid
+
+
 def run_agent(
     query: str,
     llm_service: BaseLLMService | None = None,
     thread_id: str | None = None,
     *,
     user_id: str | None = None,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[str, str]:
-    """Run the bounded agent graph with evidence and answer validation.
-
-    Args:
-        query: The user's question.
-        llm_service: Optional LLM service override.
-        thread_id: Optional conversation thread ID for multi-turn. If None,
-                   a new thread is created.
-        user_id: Stable host-provided identity for durable business facts; pass on every call.
-
-    Returns:
-        Tuple of (answer, thread_id). Use thread_id in subsequent calls to
-        continue the same conversation.
-    """
-    logger.info("Agent query: %s", query)
-
-    if llm_service is None:
-        llm_service = create_llm_service()
-
+    """Run the agent, optionally receiving safe progress events, and retain its thread."""
     from nagrik_ai.factories import create_agent_graph
-    from nagrik_ai.models.agent_state import AgentState
 
-    checkpointer = _get_checkpointer()
-    agent_graph = create_agent_graph(llm_service=llm_service, checkpointer=checkpointer)
-
-    tid = thread_id or uuid4().hex
-
-    if thread_id is None:
-        initial_state: AgentState = {
-            "query": query,
-            "rewritten_queries": [],
-            "documents": [],
-            "candidate_answers": [],
-            "answer": None,
-            "confidence": None,
-            "citations": [],
-            "errors": [],
-            "metadata": {},
-            "tool_calls": [],
-            "tool_results": [],
-            "current_tool": None,
-            "session_id": None,
-            "user_id": user_id,
-            "trace_id": None,
-            "context": None,
-            "retrieval_config": {},
-            "citations_valid": None,
-            "rag_result": None,
-            "_streaming_buffer": None,
-            "_streaming_callback": None,
-            "messages": [HumanMessage(content=query)],
-        }
-        final_state = agent_graph.invoke(
-            initial_state,
-            config={"configurable": {"thread_id": tid}},
-        )
-    else:
-        final_state = agent_graph.invoke(
-            {"query": query, "user_id": user_id, "business_context": {}},
-            config={"configurable": {"thread_id": tid}},
-        )
-
-    return final_state.get("answer", "") or "", tid
+    graph = create_agent_graph(llm_service=llm_service or create_llm_service(), checkpointer=_get_checkpointer())
+    return run_agent_from_graph(graph, query, thread_id, user_id=user_id, on_event=on_event)

@@ -240,6 +240,16 @@ def create_rag_graph_entry(
     return graph, _run_query, _stream_query
 
 
+class _AgentGraphEntry(Protocol):
+    def __call__(self, query: str, thread_id: str | None = None, *, user_id: str | None = None) -> tuple[str, str]: ...
+
+
+class _AgentGraphStreamEntry(Protocol):
+    def __call__(
+        self, query: str, thread_id: str | None = None, *, user_id: str | None = None
+    ) -> Iterator[dict[str, Any]]: ...
+
+
 class AppStack(NamedTuple):
     """Single instance of every dependency, built once at startup."""
 
@@ -250,6 +260,10 @@ class AppStack(NamedTuple):
     reranker: Reranker | None
     llm_service: BaseLLMService
     chroma_store: ChromaStore
+    agent_graph: CompiledStateGraph[AgentState, Any, Any, Any]
+    run_agent: _AgentGraphEntry
+    stream_agent: _AgentGraphStreamEntry
+    business_profile_service: BusinessProfileService
 
 
 _stack: AppStack | None = None
@@ -321,6 +335,24 @@ def build_app_stack(
             user_id=user_id,
         )
 
+    from nagrik_ai.agent.router import run_agent_from_graph, stream_agent_from_graph
+
+    profile_service = create_business_profile_service()
+    agent_graph = create_agent_graph(
+        llm_service=resolved_llm,
+        checkpointer=checkpointer if checkpointer is not None else create_checkpointer(),
+        business_profile_service=profile_service,
+        tracer=tracer,
+    )
+
+    def _run_agent(query: str, thread_id: str | None = None, *, user_id: str | None = None) -> tuple[str, str]:
+        return run_agent_from_graph(agent_graph, query, thread_id, user_id=user_id)
+
+    def _stream_agent(
+        query: str, thread_id: str | None = None, *, user_id: str | None = None
+    ) -> Iterator[dict[str, Any]]:
+        return stream_agent_from_graph(agent_graph, query, thread_id, user_id=user_id)
+
     stack = AppStack(
         graph=graph,
         run_query=_run_query,
@@ -329,6 +361,10 @@ def build_app_stack(
         reranker=resolved_reranker,
         llm_service=resolved_llm,
         chroma_store=chroma_store,
+        agent_graph=agent_graph,
+        run_agent=_run_agent,
+        stream_agent=_stream_agent,
+        business_profile_service=profile_service,
     )
     _stack = stack
     logger.info("Built app stack with single shared graph and dependencies")

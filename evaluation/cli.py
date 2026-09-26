@@ -117,6 +117,7 @@ def agent_run(
     """Run the real agent and report policy, budget, calculation and termination checks."""
     import json
 
+    from evaluation.reporting.report import write_agent_report
     from evaluation.runners.agent_runner import run_agent_eval
 
     try:
@@ -124,11 +125,9 @@ def agent_run(
     except (OSError, ValueError, RuntimeError) as exc:
         typer.echo(f"Agent evaluation failed: {exc}", err=True)
         raise typer.Exit(1) from exc
-    output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / "agent_report.json"
-    path.write_text(json.dumps(report, indent=2) + "\n")
+    path, markdown_path = write_agent_report(report, output_dir)
     typer.echo(json.dumps(report["summary"], indent=2))
-    typer.echo(f"Report written: {path}")
+    typer.echo(f"Report written: {path}\nSummary written: {markdown_path}")
     if report["summary"]["execution_errors"]:
         raise typer.Exit(1)
 

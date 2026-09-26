@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 from statistics import fmean
+from typing import Any
 
 from evaluation.runners.rag_runner import RagCaseResult, RagEvalResult, aggregate_retrieval_ranking
 
@@ -205,3 +206,30 @@ def _case_block(case: RagCaseResult) -> list[str]:
                 f"{'yes' if score.success else 'no'} | {score.reason.replace('|', '\\|')} |"
             )
     return lines
+
+
+def write_agent_report(result: dict[str, Any], output_dir: str | Path) -> tuple[Path, Path]:
+    """Write deterministic agent metrics and per-case verdicts in JSON and Markdown."""
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    json_path, md_path = out / "agent_report.json", out / "agent_summary.md"
+    json_path.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    lines = ["# NagrikAI Agent Evaluation", "", "| Metric | Value |", "|---|---|"]
+    for name, value in result["summary"].items():
+        lines.append(f"| {name} | {json.dumps(value, ensure_ascii=False)} |")
+    lines.extend(
+        [
+            "",
+            "Tool selection accuracy requires all required tools to succeed, no unlisted or forbidden tools, "
+            "and compliance with per-tool limits. Policy compliance additionally checks transitions, authority, "
+            "evidence tools, total call budget and expected calculations.",
+            "",
+            "Claim rates use all evaluated verdicts as their denominator. Citation coverage is the number of "
+            "distinct cited IDs present in the source map divided by the larger of the cited ID count and "
+            "the expected citation count; cases with neither are unscored.",
+        ]
+    )
+    for case in result["cases"]:
+        lines.extend(["", f"## {case['id']}", "", "```json", json.dumps(case, indent=2, ensure_ascii=False), "```"])
+    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return json_path, md_path

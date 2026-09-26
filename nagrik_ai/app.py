@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import html
 import logging
-from collections.abc import Generator, Iterator
+from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -9,7 +10,7 @@ from uuid import uuid4
 import gradio as gr
 
 from nagrik_ai.factories import AppStack, get_app_stack
-from nagrik_ai.models.rag_result import RAGResult, SourceInfo
+from nagrik_ai.models.rag_result import SourceInfo
 from nagrik_ai.services.citation_service import make_citations_clickable
 from nagrik_ai.services.llm_service import RateLimitError
 from nagrik_ai.tools.pdf_reader import read_pdf
@@ -28,6 +29,34 @@ def _format_sources(sources: list[SourceInfo]) -> str:
     for s in sources:
         lines.append(f"**[{s.citation_id}]** [{s.title}]({s.url}) — *{s.domain}* (source: {s.source_id})")
     return "\n\n".join(lines)
+
+
+def _agent_sources(citations: list[dict[str, Any]]) -> list[SourceInfo]:
+    return [
+        SourceInfo(
+            title=str(c.get("title", c.get("source_id", "Source"))),
+            url=str(c.get("url", "")),
+            domain=str(c.get("domain", "")),
+            source_id=str(c["source_id"]),
+            citation_id=int(c["citation_id"]),
+            chunk_index=int(c.get("chunk_index", 0)),
+            total_chunks=int(c.get("total_chunks", 1)),
+        )
+        for c in citations
+        if c.get("source_id") and c.get("citation_id")
+    ]
+
+
+def _format_claim_verdicts(verdicts: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for verdict in verdicts:
+        references = [f"[{cid}]" for cid in verdict.get("evidence_ids", [])]
+        references.extend(verdict.get("tool_result_refs", []))
+        lines.append(
+            f"**{html.escape(verdict['status'])}** ({html.escape(verdict['method'])}): "
+            f"{html.escape(verdict['claim'])} — {html.escape(', '.join(references))}"
+        )
+    return "\n\n".join(lines) or "No claim verdicts available."
 
 
 def handle_pdf_upload(file: Any) -> tuple[str, str]:
@@ -68,75 +97,56 @@ def _build_streaming_ui(stack: AppStack | None = None) -> gr.Blocks:
         chat_history: list[dict[str, str]],
         session_state: str,
         pdf_context: str,
-    ) -> Generator[tuple[str, list[dict[str, str]], str]]:
-        if not chat_history:
-            chat_history = []
-
-        chat_history.append({"role": "user", "content": message})
-        chat_history.append({"role": "assistant", "content": "..."})
-        yield "", chat_history, "No sources yet..."
-
+    ) -> Generator[tuple[str, list[dict[str, str]], str, str, str, str]]:
+        history = [*(chat_history or []), {"role": "user", "content": message}]
+        sources, steps_display, verdicts, banner = "No sources yet...", "", "", ""
+        response = "Working…"
+        yield "", [*history, {"role": "assistant", "content": response}], sources, steps_display, verdicts, banner
         try:
-            logger.info("Starting to consume response stream")
-            if pdf_context:
-                enhanced_query = f"[Uploaded PDF content]\n{pdf_context[:20000]}\n\n[User question]\n{message}"
-            else:
-                enhanced_query = message
-
-            stream: Iterator[dict[str, Any]] = (stack or get_app_stack(enable_fallback=True)).stream_query(
-                enhanced_query,
-                session_id=session_state,
+            enhanced_query = (
+                f"[Uploaded PDF content]\n{pdf_context[:20000]}\n\n[User question]\n{message}"
+                if pdf_context
+                else message
             )
-            chat_history.pop()
-            assistant_response = ""
-            citations_display = ""
-            first_token = True
-            for chunk in stream:
-                if chunk["type"] == "token":
-                    if first_token:
-                        logger.info("Replacing ellipsis with first meaningful chunk")
-                        first_token = False
-                    assistant_response += chunk["content"]
-                    current_history = chat_history.copy()
-                    current_history.append({"role": "assistant", "content": assistant_response})
-                    yield "", current_history, citations_display
-                elif chunk["type"] == "final":
-                    result: RAGResult = chunk["data"]
-                    citations_display = (
-                        "Sources: Web search results" if not result.citations_valid else _format_sources(result.sources)
-                    )
-                    clickable_response = make_citations_clickable(result.response, result.sources)
-                    if result.truncated:
-                        clickable_response += (
-                            "\n\n> ⚠️ Response was cut short by the model's token limit. "
-                            "Ask in a more focused way or retry."
+            stream = (stack or get_app_stack(enable_fallback=True)).stream_agent(
+                enhanced_query, thread_id=session_state
+            )
+            for event in stream:
+                if event["type"] == "agent_step":
+                    step = event["data"]
+                    result = step["tool_result"]
+                    authority = f" [{result.source_authority}]" if result and result.source_authority else ""
+                    line = f"{step['observation_summary']} `{step['action']}`{authority}"
+                    steps_display += ("\n\n" if steps_display else "") + line
+                    response = step["observation_summary"]
+                elif event["type"] == "final":
+                    data = event["data"]
+                    source_list = _agent_sources(data.get("citations", []))
+                    sources = _format_sources(source_list)
+                    response = make_citations_clickable(data["answer"], source_list)
+                    verdicts = _format_claim_verdicts(data.get("claim_verdicts", []))
+                    if data.get("finalized_with_limitations"):
+                        banner = (
+                            "> ⚠️ This answer could not be fully validated. Review the claim checks and sources below."
                         )
-                    assistant_response = clickable_response
-                    current_history = chat_history.copy()
-                    current_history.append({"role": "assistant", "content": clickable_response})
-                    yield "", current_history, citations_display
-
-            chat_history.append({"role": "assistant", "content": assistant_response})
-            yield "", chat_history, citations_display
-
-        except RateLimitError as e:
-            logger.warning("Rate limit / capacity error: %s", e)
-            chat_history.pop()
-            error_message = (
-                "The AI service is temporarily at capacity. Please wait a few moments and try again. "
-                "If this keeps happening, try switching to a different model."
-            )
-            chat_history.append({"role": "assistant", "content": error_message})
-            yield "", chat_history, citations_display
+                yield (
+                    "",
+                    [*history, {"role": "assistant", "content": response}],
+                    sources,
+                    steps_display,
+                    verdicts,
+                    banner,
+                )
+        except RateLimitError:
+            response = "The AI service is temporarily at capacity. Please wait a few moments and try again."
+            yield "", [*history, {"role": "assistant", "content": response}], sources, steps_display, verdicts, banner
         except Exception:
-            logger.exception("Error generating response")
-            chat_history.pop()
-            error_message = "I encountered an error while processing your query. Please try again."
-            chat_history.append({"role": "assistant", "content": error_message})
-            yield "", chat_history, citations_display
+            logger.exception("Error generating agent response")
+            response = "I encountered an error while processing your query. Please try again."
+            yield "", [*history, {"role": "assistant", "content": response}], sources, steps_display, verdicts, banner
 
     with gr.Blocks(title="NagrikAI - Indian TAX Assistant") as demo:
-        session_state = gr.State(value=str(uuid4()))
+        session_state = gr.State(value=lambda: str(uuid4()))
         pdf_context = gr.State(value="")
 
         gr.Markdown("# NagrikAI")
@@ -144,6 +154,7 @@ def _build_streaming_ui(stack: AppStack | None = None) -> gr.Blocks:
 
         with gr.Row():
             with gr.Column(scale=3):
+                limitations_banner = gr.Markdown("")
                 chatbot = gr.Chatbot(label="Conversation", height=500)
                 msg = gr.Textbox(
                     label="Your question",
@@ -171,15 +182,20 @@ def _build_streaming_ui(stack: AppStack | None = None) -> gr.Blocks:
                     elem_id="sources-panel",
                 )
 
+                with gr.Accordion("AgentSteps", open=False):
+                    steps_panel = gr.Markdown("")
+                with gr.Accordion("Claim checks", open=False):
+                    claims_panel = gr.Markdown("")
+
         msg.submit(
             respond_stream,
             [msg, chatbot, session_state, pdf_context],
-            [msg, chatbot, sources_panel],
+            [msg, chatbot, sources_panel, steps_panel, claims_panel, limitations_banner],
         )
         submit.click(
             respond_stream,
             [msg, chatbot, session_state, pdf_context],
-            [msg, chatbot, sources_panel],
+            [msg, chatbot, sources_panel, steps_panel, claims_panel, limitations_banner],
         )
         clear.click(
             lambda: (
@@ -189,6 +205,9 @@ def _build_streaming_ui(stack: AppStack | None = None) -> gr.Blocks:
                 str(uuid4()),
                 "",
                 "No PDF uploaded.",
+                "",
+                "",
+                "",
             ),
             None,
             [
@@ -198,6 +217,9 @@ def _build_streaming_ui(stack: AppStack | None = None) -> gr.Blocks:
                 session_state,
                 pdf_context,
                 pdf_status,
+                steps_panel,
+                claims_panel,
+                limitations_banner,
             ],
         )
 

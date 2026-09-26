@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import re
 import time
 from collections import Counter
 from pathlib import Path
@@ -38,7 +39,31 @@ def score_agent_case(case: dict[str, Any], state: dict[str, Any]) -> dict[str, A
     )
     budget_ok = state.get("tool_calls_count", len(calls)) <= case.get("max_tool_calls", float("inf"))
     terminated = bool(state.get("metadata", {}).get("agent_turn_completed"))
+    verdicts = state.get("claim_verdicts", [])
+    statuses = Counter(v["status"] for v in verdicts)
+    methods = Counter(v["method"] for v in verdicts)
+    method_statuses: dict[str, dict[str, int]] = {}
+    for verdict in verdicts:
+        breakdown = method_statuses.setdefault(verdict["method"], {})
+        breakdown[verdict["status"]] = breakdown.get(verdict["status"], 0) + 1
+    known_citations = {c["citation_id"] for c in state.get("citations", []) if c.get("source_id")}
+    cited = {int(cid) for cid in re.findall(r"\[(\d+)\]", state.get("answer") or "")}
+    valid_cited = cited & known_citations
+    expected_citations = case.get("expected_citations", 0)
+    citation_coverage = len(valid_cited) / max(len(cited), expected_citations) if cited or expected_citations else None
+    selection_ok = (
+        recall == 1 and not forbidden and not per_tool and actual <= required | set(case.get("allowed_tools", []))
+    )
     return {
+        "tool_selection_correct": selection_ok,
+        "claim_verdicts": verdicts,
+        "claim_status_counts": {status: statuses[status] for status in ("supported", "unsupported", "indeterminate")},
+        "claim_method_counts": dict(methods),
+        "claim_method_status_counts": method_statuses,
+        "citation_coverage": citation_coverage,
+        "valid_citation_count": len(valid_cited),
+        "invalid_citation_count": len(cited - known_citations),
+        "expected_citations_met": len(valid_cited) >= expected_citations,
         "id": case["id"],
         "required_tools_recall": recall,
         "forbidden_violations": forbidden,
@@ -95,7 +120,28 @@ def run_agent_eval(dataset_path: Path, limit: int | None = None, graph: Any = No
         score["policy_compliant"] = score["policy_compliant"] and error is None
         scores.append(score)
     n = len(scores)
+    status_counts: Counter[str] = Counter()
+    method_counts: Counter[str] = Counter()
+    method_status_counts: dict[str, Counter[str]] = {}
+    for score in scores:
+        status_counts.update(score["claim_status_counts"])
+        method_counts.update(score["claim_method_counts"])
+        for method, counts in score["claim_method_status_counts"].items():
+            method_status_counts.setdefault(method, Counter()).update(counts)
+    claim_count = sum(status_counts.values())
+    coverage = [s["citation_coverage"] for s in scores if s["citation_coverage"] is not None]
     summary = {
+        "tool_selection_accuracy": sum(s["tool_selection_correct"] and s["error"] is None for s in scores) / n,
+        "authority_compliance_rate": sum(s["authority_compliant"] and s["error"] is None for s in scores) / n,
+        "claim_status_counts": dict(status_counts),
+        "claim_method_counts": dict(method_counts),
+        "claim_method_status_counts": {method: dict(counts) for method, counts in method_status_counts.items()},
+        "indeterminate_rate": status_counts["indeterminate"] / claim_count if claim_count else 0.0,
+        "supported_rate": status_counts["supported"] / claim_count if claim_count else 0.0,
+        "unsupported_rate": status_counts["unsupported"] / claim_count if claim_count else 0.0,
+        "claims_evaluated": claim_count,
+        "citation_coverage": sum(coverage) / len(coverage) if coverage else None,
+        "citation_cases_evaluated": len(coverage),
         "cases": n,
         "required_tools_recall": sum(s["required_tools_recall"] for s in scores) / n,
         "policy_compliance_rate": sum(s["policy_compliant"] for s in scores) / n,
