@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./logo.png" alt="NagrikAI logo" width="100%" />
+</p>
+
 # NagrikAI
 
 AI-powered Indian Business Compliance & Advisory Agent.
@@ -81,6 +85,12 @@ NagrikAI operates with a finite context window determined by the LLM's capacity 
 - Accept that some niche queries may require refinement or fallback to web search
 
 This constraint ensures predictable latency, prevents context overflow errors, and focuses the LLM on the most relevant information – mirroring how human researchers work with limited cognitive bandwidth.
+
+## NagrikAI Preview
+
+<p align="center">
+  <img src="./nagarik%20AI.png" alt="NagrikAI preview" width="100%" />
+</p>
 
 ### Installation
 
