@@ -4,207 +4,83 @@
 
 # NagrikAI
 
-AI-powered Indian Business Compliance & Advisory Agent.
+NagrikAI is an experimental assistant for Indian tax and business compliance questions. It crawls configured government websites, converts pages into a searchable local collection, and uses an LLM agent to answer questions with source links. The agent can also calculate, read PDFs, look up standard filing dates, and suggest a small set of MSME schemes for review.
 
-## Vision
+The Gradio interface shows the conversation, sources, agent steps, and claim checks. Answers and calculated dates can be wrong or outdated; verify decisions and deadlines against regulator sources.
 
-Evolve from a GST RAG chatbot into a **Business Compliance & Advisory Agent** that diagnoses business problems, gathers missing facts, reasons over them, retrieves evidence, and produces actionable plans.
+## Requirements
 
-> **RAG answers questions. An agent diagnoses a business problem, gathers missing facts, reasons over them, retrieves evidence, and produces an actionable plan.**
+- Python 3.14 and [uv](https://docs.astral.sh/uv/) (recommended).
+- [Ollama](https://ollama.com/) with a local model, or an OpenRouter API key.
+- Network access to crawl sites and download embedding and local reranker models on first use. The initial download and app startup can take time.
 
-### Why NagrikAI
+## Get started
 
-```
-                    Business Owner
-                         │
-                         ▼
-                ┌─────────────────┐
-                │ Business Agent  │
-                │   Orchestrator  │
-                └────────┬────────┘
-                         │
-          ┌──────────────┼──────────────┐
-          ▼              ▼              ▼
-     Problem         Business        Knowledge
-     Detection       Context         Retrieval
-          │              │              │
-          ▼              ▼              ▼
-   ┌──────────┐   ┌─────────────┐ ┌──────────────┐
-   │ GST RAG  │   │ User/Business│ │ Gov / Legal  │
-   │          │   │ Profile      │ │ Documents    │
-   └──────────┘   └─────────────┘ └──────────────┘
-          │              │              │
-          └──────────────┼──────────────┘
-                         ▼
-                  ┌─────────────┐
-                  │ Reasoning / │
-                  │ Planning    │
-                  └──────┬──────┘
-                         ▼
-                  ┌─────────────┐
-                  │ Action Plan │
-                  └─────────────┘
+From the repository root, install dependencies and create a local configuration:
+
+```bash
+uv sync
+cp .env.example .env
 ```
 
-## Problem Domains
+Edit `.env` before starting. For a local setup, keep `NAGRIKAI_LLM_PROVIDER=ollama` and the example's local reranker settings. Start Ollama and download the configured model:
 
-### 1. GST & Taxation
+```bash
+ollama serve
+# In another terminal:
+ollama pull qwen2.5:7b
+```
 
-- GST registration, composition scheme, input tax credit, GST returns
-- E-invoicing, e-way bills, HSN/SAC, reverse charge
-- GST notices, registration amendments, cancellation, refunds
+The example `.env` includes placeholder API keys. Remove or replace them before using those services. For OpenRouter, set `NAGRIKAI_LLM_PROVIDER=openrouter`, `NAGRIKAI_OPENROUTER_API_KEY`, and `NAGRIKAI_OPENROUTER_MODEL` in `.env`. See [`.env.example`](./.env.example) for other settings.
 
-### 2. Business Registration & Government Compliance
+Build the local search collection, then launch the web app:
 
-- MCA, Udyam, Income Tax, GST, Shops & Establishments
-- EPFO, ESIC, FSSAI, DGFT, state-specific registrations, local licenses
+```bash
+uv run nagrik-ai crawl sites --site gst --site gst_tutorial
+uv run nagrik-ai parse all
+uv run nagrik-ai vectorize
+uv run nagrik-ai app-command
+```
 
-### 3. Business Decision Support
+Open the local URL printed by Gradio (port 7860 by default). Omit `--site` to crawl all configured sites. If `content/` already has parsed documents, you can run `vectorize` without crawling again. The crawler writes to `content/<site>/crawled/`, the parser writes to `content/<site>/parsed/`, and the vectorizer stores embeddings in `chroma_db/` by default. Source definitions live in [`nagrik_ai/config/site_configs.yaml`](./nagrik_ai/config/site_configs.yaml).
 
-- Revenue/margin analysis, hiring affordability, EMI calculations
-- Tools: `calculator`, `financial_analysis`, `tax_calculator`
+## CLI commands
 
-### 4. Government Scheme Discovery
+| Command | Purpose |
+| --- | --- |
+| `uv run nagrik-ai --help` | Show commands and options. |
+| `uv run nagrik-ai crawl sites` | Crawl configured sources; select one with `--site NAME`. |
+| `uv run nagrik-ai parse all` | Convert crawled HTML to Markdown. |
+| `uv run nagrik-ai vectorize` | Index parsed Markdown in ChromaDB. |
+| `uv run nagrik-ai app-command --port 7860` | Start the Gradio interface. |
+| `uv run nagrik-ai agent chat "What is the QRMP scheme?"` | Ask the agent from the terminal. |
+| `uv run nagrik-ai agent chat "Start" --interactive` | Start a multi-turn terminal session; use the printed ID with `--session` to resume. |
 
-- Subsidies, incentives, loans, and schemes based on industry, location, company size, investment, employment
+The agent routes among local document search, Tavily web search, PDF reading, a calculator, a tax calculator, a standard compliance date calculator, and a small source-linked MSME scheme catalogue. Web search needs `NAGRIKAI_TAVILY_API_KEY` (or `TAVILY_API_KEY`). Scheme matches are candidates, not eligibility determinations. Compliance dates are baseline rules and do not include later extensions or notices.
 
-### 5. Compliance Calendar
+The web app accepts PDF uploads and displays citations where the answer provides them. Conversation checkpoints and business profiles are stored under `checkpoints/` by default.
 
-- GST: GSTR-1, GSTR-3B, Annual return
-- Income Tax: Advance tax
-- MCA: AOC-4, MGT-7
-- Labour: PF, ESIC
+## How it works
 
-### Bounded context, on purpose
+1. The Scrapy crawler collects pages listed in the site configuration.
+2. The parser converts HTML to Markdown, and the vectorizer chunks and embeds it in ChromaDB.
+3. Retrieval combines dense search with optional BM25 search and reranking. The default result count is five (`NAGRIKAI_TOP_K`), selected from up to 20 candidates (`NAGRIKAI_FETCH_K`).
+4. The LangGraph agent selects tools, checks evidence, drafts an answer, and checks claims. When validation cannot complete, the interface marks the answer with limitations.
 
-NagrikAI operates with a finite context window determined by the LLM's capacity (typically 8K-32K tokens). Rather than attempting to retrieve and reason over unlimited documents, we:
+The indexed collection covers only pages you have crawled and parsed. It is not a complete or automatically current record of Indian law. Web search can supplement the collection but its results also need verification.
 
-- Retrieve top-K chunks (configurable, default 5) after reranking from Fetch-K candidates (default 20)
-- Apply strict token limits to context construction
-- Truncate overly long documents during parsing
-- Accept that some niche queries may require refinement or fallback to web search
+## Development and evaluation
 
-This constraint ensures predictable latency, prevents context overflow errors, and focuses the LLM on the most relevant information – mirroring how human researchers work with limited cognitive bandwidth.
+```bash
+uv run pytest
+uv run ruff check .
+uv run mypy nagrik_ai
+uv run nagrik-eval validate-datasets
+uv run nagrik-eval deepeval run --offline --limit 5
+```
 
-## NagrikAI Preview
+The evaluation CLI also supports `nagrik-eval agent run`; see `uv run nagrik-eval --help` for options. Online evaluation uses a configured judge model. Datasets and rubrics are under [`evaluation/`](./evaluation/).
 
 <p align="center">
-  <img src="./nagarik%20AI.png" alt="NagrikAI preview" width="100%" />
+  <img src="./nagarik%20AI.png" alt="NagrikAI interface preview" width="100%" />
 </p>
-
-### Installation
-
-```bash
-# Clone and install
-git clone https://github.com/your-org/nagrik-ai.git
-cd nagrik-ai
-
-# Install with UV (recommended)
-uv sync
-
-# Or with pip
-pip install -e .
-
-# Verify installation
-uv run nagrik-ai --help
-```
-
-### Quick start
-
-```bash
-# 1. Crawl official government sources (runs scrapy spiders)
-uv run nagrik-ai crawl sites
-
-# 2. Parse HTML to Markdown
-uv run nagrik-ai parse all
-
-# 3. Vectorize documents into ChromaDB
-uv run nagrik-ai vectorize
-
-# 4. Launch the Gradio web interface
-uv run nagrik-ai app-command
-
-# Optional: Use OpenRouter instead of local Ollama
-uv run nagrik-ai app-command --llm-provider openrouter
-```
-
-### Commands
-
-| Command                                | Description                               |
-| -------------------------------------- | ----------------------------------------- |
-| `nagrik-ai crawl sites`                | Crawl all configured government sites     |
-| `nagrik-ai parse all`                  | Convert crawled HTML to clean Markdown    |
-| `nagrik-ai vectorize`                  | Generate embeddings and populate ChromaDB |
-| `nagrik-ai app-command`                | Launch the Gradio web UI                  |
-| `nagrik-ai trace test "Your question"` | Test with LangSmith tracing enabled       |
-| `uv run pytest tests/ -v`              | Run the test suite                        |
-
-### Shell integration
-
-Add this to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) for quick access:
-
-```bash
-# Quick NagrikAI access
-alias nagrik='uv run nagrik-ai app-command'
-```
-
-Then simply type `nagrik` in your terminal to launch the assistant.
-
-### Supported providers
-
-| Provider             | Setup                                         | Notes                          |
-| -------------------- | --------------------------------------------- | ------------------------------ |
-| **Ollama** (default) | `ollama serve` + `ollama pull mistral:latest` | Fully private, local inference |
-| **OpenRouter**       | Set `NAGRIKAI_OPENROUTER_API_KEY` env var     | Access to 100+ cloud LLMs      |
-
-### Example configuration
-
-Create .env file (or set environment variables):
-
-```env
-# LLM Provider (ollama or openrouter)
-NAGRIKAI_LLM_PROVIDER=ollama
-
-# Ollama settings (used when provider=ollama)
-NAGRIKAI_OLLAMA_BASE_URL=http://localhost:11434
-NAGRIKAI_OLLAMA_MODEL=mistral:latest
-
-# OpenRouter settings (used when provider=openrouter)
-NAGRIKAI_OPENROUTER_API_KEY=your-key-here
-NAGRIKAI_OPENROUTER_MODEL=anthropic/claude-3.5-sonnet
-
-# Embedding and reranking
-NAGRIKAI_EMBEDDING_MODEL=BAAI/bge-m3
-NAGRIKAI_RERANKER_MODEL=BAAI/bge-reranker-large
-NAGRIKAI_RERANKER_ENABLED=true
-NAGRIKAI_HYBRID_SEARCH_ENABLED=true
-
-# Retrieval tuning
-NAGRIKAI_TOP_K=5
-NAGRIKAI_FETCH_K=20
-NAGRIKAI_LAMBDA_MULT=0.7
-NAGRIKAI_BM25_K1=1.5
-NAGRIKAI_BM25_B=0.75
-NAGRIKAI_RRF_K=60
-
-# Observability
-LANGSMITH_TRACING_ENABLED=true
-LANGSMITH_API_KEY=your-langsmith-key
-LANGSMITH_PROJECT=nagrik-ai
-```
-
-### License
-
-MIT
-
-### Acknowledgements
-
-- [LangChain](https://www.langchain.com/) and [LangGraph](https://langchain-ai.github.io/langgraph/) for LLM orchestration
-- [ChromaDB](https://www.trychroma.com/) for vector storage
-- [Sentence Transformers](https://www.sbert.net/) for embedding models
-- [BM25](https://en.wikipedia.org/wiki/Okapi_BM25) via [rank-bm25](https://pypi.org/project/rank-bm25/) for keyword search
-- [Gradio](https://www.gradio.app/) for the web interface
-- [Typer](https://tiangolo.com/typer/) for the CLI
-- [Pydantic](https://docs.pydantic.dev/) for configuration management
-- [Ruff](https://docs.astral.sh/ruff/) and [MyPy](https://mypy-lang.org/) for code quality
-- Official Indian government websites (india.gov.in, gst.gov.in, tutorial.gst.gov.in) as knowledge sources
