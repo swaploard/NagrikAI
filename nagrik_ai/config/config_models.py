@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl
 
 load_dotenv()
 
@@ -31,10 +32,16 @@ def _get_env_bool(key: str, default: bool) -> bool:
 
 
 class CrawlerConfig(BaseModel):
+    crawl_strategy: Literal["html", "browser", "hybrid"] = "html"
     max_concurrency: int = 5
+    per_domain_concurrency: int = 2
     request_delay: float = 1.0
     timeout: int = 30
     max_depth: int = 1
+    autothrottle_enabled: bool = True
+    autothrottle_start_delay: float = 1.0
+    autothrottle_max_delay: float = 60.0
+    autothrottle_target_concurrency: float = 1.0
     user_agent: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -57,7 +64,7 @@ class ParserConfig(BaseModel):
     strip_selectors: list[str] = ["nav", "footer", "script", "style"]
     fallback_to_body: bool = True
     output_format: str = "markdown"
-    markdown: MarkdownConfig = MarkdownConfig()
+    markdown: MarkdownConfig = Field(default_factory=MarkdownConfig)
 
 
 class SiteConfig(BaseModel):
@@ -65,8 +72,8 @@ class SiteConfig(BaseModel):
     base_url: HttpUrl
     start_urls: list[HttpUrl]
     allowed_domains: list[str]
-    crawler: CrawlerConfig = CrawlerConfig()
-    parser: ParserConfig = ParserConfig()
+    crawler: CrawlerConfig = Field(default_factory=CrawlerConfig)
+    parser: ParserConfig = Field(default_factory=ParserConfig)
 
 
 class OpenRouterConfig(BaseModel):
@@ -100,7 +107,7 @@ class NagrikAIConfig(BaseModel):
     llm_provider: str = _get_env("NAGRIKAI_LLM_PROVIDER", "ollama")
     ollama_base_url: str = _get_env("NAGRIKAI_OLLAMA_BASE_URL", "http://localhost:11434")
     ollama_model: str = _get_env("NAGRIKAI_OLLAMA_MODEL", "qwen2.5:7b")
-    openrouter: OpenRouterConfig = OpenRouterConfig()
+    openrouter: OpenRouterConfig = Field(default_factory=OpenRouterConfig)
     chunk_size: int = _get_env_int("NAGRIKAI_CHUNK_SIZE", 800)
     chunk_overlap: int = _get_env_int("NAGRIKAI_CHUNK_OVERLAP", 200)
     top_k: int = _get_env_int("NAGRIKAI_TOP_K", 5)

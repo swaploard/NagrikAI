@@ -19,6 +19,7 @@ import yaml
 from lxml import html
 
 from nagrik_ai.config.config_models import SiteConfig
+from nagrik_ai.crawler.crawl_manifest import CrawlManifest, ManifestRecord
 
 MIN_NESTED_PATH_PARTS = 2
 
@@ -63,6 +64,7 @@ class Parser:
 
         self.url_mappings: dict[str, dict[str, str]] = {}
         self._load_url_mappings()
+        self.manifest = CrawlManifest.for_crawled_dir(Path(self.input_dir), site=self.site)
 
         Path(self.output_dir).mkdir(parents=True, exist_ok=True)
         self.logger.info("Initialized Parser for %s", self.site)
@@ -88,6 +90,9 @@ class Parser:
             self.logger.debug("URL mapping file not found: %s", mapping_file)
 
     def _get_original_url(self, file_path: str | Path) -> str | None:
+        version = self.manifest.version_for_local_path(Path(file_path))
+        if version is not None:
+            return version.observed_source_url
         file_path_str = str(file_path)
         url = (
             self._try_exact_match(file_path_str)
@@ -269,8 +274,11 @@ class Parser:
             domain = self._extract_domain_from_path(html_file_path)
             output_filename = self._get_output_filename(html_file_path)
             title, content = self._parse_html(html_content)
-            metadata = self._create_metadata(html_file_path, title)
+            version = self.manifest.version_for_local_path(html_file_path)
+            metadata = self._create_metadata(html_file_path, title, version=version)
             output_path = self._save_markdown(output_filename, title, content, metadata)
+            if version is not None:
+                self.manifest.register_parsed_artifact(version.version_id, Path(output_path))
 
             return {
                 "source_file": str(html_file_path),
@@ -285,7 +293,12 @@ class Parser:
             if original_base_url is not None and not preserve_url_context:
                 self.current_base_url = original_base_url
 
-    def _create_metadata(self, file_path: str | Path, title: str) -> dict[str, Any]:
+    def _create_metadata(
+        self,
+        file_path: str | Path,
+        title: str,
+        version: ManifestRecord | None = None,
+    ) -> dict[str, Any]:
         domain = self._extract_domain_from_path(file_path)
         metadata: dict[str, Any] = {
             "source_file": str(file_path),
@@ -297,9 +310,24 @@ class Parser:
         original_url = self._get_original_url(file_path)
         if original_url:
             metadata["source_url"] = original_url
+        if version is not None:
+            metadata.update(
+                {
+                    "source_id": version.source_id,
+                    "document_id": version.document_id,
+                    "version_id": version.version_id,
+                    "content_hash": version.content_hash,
+                    "identity_status": version.identity_status,
+                }
+            )
         return metadata
 
     def _get_output_filename(self, html_file_path: Path) -> str:
+        version = self.manifest.version_for_local_path(html_file_path)
+        if version is not None:
+            if version.document_id is None:
+                return f"unresolved/{version.source_id}/{version.version_id}"
+            return f"documents/{version.document_id}/{version.version_id}"
         try:
             rel_path = html_file_path.relative_to(Path(self.input_dir))
             parts = rel_path.parts

@@ -38,16 +38,23 @@ app.add_typer(vectorize_app, name="vectorize", help="Vectorize parsed documents 
 def sites(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Path to site config YAML")] = None,
     output_dir: Annotated[Path, typer.Option("--output", "-o", help="Output directory")] = CONTENT_DIR,
-    depth: Annotated[int | None, typer.Option("--depth", "-d", help="Max crawl depth (0 = unlimited)")] = 1,
+    depth: Annotated[int | None, typer.Option("--depth", "-d", help="Override each site's max crawl depth")] = None,
     site_names: Annotated[
         list[str] | None,
         typer.Option("--site", "-s", help="Site name(s) to crawl (can be repeated, e.g. -s gst -s gst_tutorial)"),
     ] = None,
     manage: Annotated[bool, typer.Option("--manage", "-m", help="Skip already-crawled URLs")] = False,
+    force: Annotated[bool, typer.Option("--force", help="Fetch known URLs again")] = False,
+    incremental: Annotated[
+        bool, typer.Option("--incremental", help="Discover new records and revisit known URLs by policy")
+    ] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Enable verbose output")] = False,
 ) -> None:
     if verbose:
         logging.getLogger().setLevel(logging.DEBUG)
+    if manage and force:
+        typer.echo("--manage and --force cannot be used together.", err=True)
+        raise typer.Exit(2)
 
     from nagrik_ai.config.config_models import SiteConfig
     from nagrik_ai.crawler.scrapy_runner import run_batch_scrapy_crawl
@@ -69,7 +76,18 @@ def sites(
         typer.echo(f"Crawling {site.name}...")
         crawled_dir = output_dir / site.name / "crawled"
         jobs.append((site, crawled_dir, manage))
-    run_batch_scrapy_crawl(jobs, max_depth=depth)
+    run_batch_scrapy_crawl(jobs, max_depth=depth, force=force, incremental=incremental)
+
+
+@crawl_app.command("reconcile")
+def reconcile_manifest(
+    site_root: Annotated[Path, typer.Argument(help="Site content directory containing crawled/ and manifests/")],
+) -> None:
+    from nagrik_ai.crawler.crawl_manifest import CrawlManifest
+
+    manifest = CrawlManifest(site_root)
+    reconciled = manifest.reconcile_migrations()
+    typer.echo(f"Reconciled {len(reconciled)} migration(s).")
 
 
 @parse_app.command()
