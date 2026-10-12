@@ -114,6 +114,118 @@ sites:
         - script
         - style
 
+  - name: cbic_gst
+    base_url: https://cbic-gst.gov.in
+    start_urls:
+      - https://cbic-gst.gov.in/gst-goods-services-rates.html
+      - https://cbic-gst.gov.in/hindi/gst-goods-services-rates.html
+    allowed_domains:
+      - cbic-gst.gov.in
+    crawler:
+      crawl_strategy: html
+      max_concurrency: 2
+      per_domain_concurrency: 1
+      request_delay: 2.0
+      timeout: 60
+      max_depth: 1
+    discovery:
+      follow_links: true
+      allowed_path_patterns:
+        - '^/(hindi/)?gst-goods-services-rates\.html$'
+        - '^/gst-rates-faq\.html$'
+        - '^/resources/.*\.[pP][dD][fF]$'
+      document_categories:
+        - gst_rates
+        - faq
+      tax_type: GST
+      languages:
+        - en
+        - hi
+      max_pages: 2
+      max_documents: 25
+    parser:
+      content_selector: "main, #page"
+      mode: auto
+      download_pdfs: true
+      extract_tables: true
+      strip_selectors:
+        - nav
+        - footer
+        - script
+        - style
+
+  - name: cbic_taxinfo
+    base_url: https://taxinformation.cbic.gov.in/
+    start_urls:
+      - https://taxinformation.cbic.gov.in/
+    allowed_domains:
+      - taxinformation.cbic.gov.in
+    crawler:
+      crawl_strategy: html
+      max_concurrency: 2
+      per_domain_concurrency: 1
+      request_delay: 2.0
+      timeout: 60
+      max_depth: 0
+    discovery:
+      follow_links: false
+      allowed_path_patterns:
+        - '^/api/cbic-(notification|circular|instruction|order|act|rule)-msts/'
+        - '^/view-pdf/[0-9]+/(ENG|HINDI)/(Notifications|Circulars|Instructions|Orders)$'
+      document_categories:
+        - notifications
+        - circulars
+        - acts
+        - rules
+        - orders
+        - instructions
+      tax_type: GST
+      tax_id: 1000001
+      languages:
+        - en
+        - hi
+      years:
+        - 2026
+      max_pages: 2
+      max_documents: 50
+      page_size: 20
+      completion_condition: response
+      public_headers:
+        Accept: application/json
+        language: en
+      api_routes:
+        notifications: /api/cbic-notification-msts/fetchNotificationByYearAndCategory
+        circulars: /api/cbic-circular-msts/fetchCircularByYearCategory
+        acts: /api/cbic-act-msts/fetchActs/{tax_id}
+        rules: /api/cbic-rule-msts/fetchRules/{tax_id}
+        orders: /api/cbic-order-msts/fetch-orders-year-category
+        instructions: /api/cbic-instruction-msts/fetch-instructions-year-category
+      download_routes:
+        notifications: /api/cbic-notification-msts/download/{id}/{language}
+        circulars: /api/cbic-circular-msts/download/{id}/{language}
+        orders: /api/cbic-order-msts/download/{id}/{language}
+        instructions: /api/cbic-instruction-msts/download/{id}/{language}
+      category_filters:
+        notifications:
+          - Central Tax
+          - Central Tax (Rate)
+          - Integrated Tax
+          - Integrated Tax (Rate)
+          - Union Territory Tax
+          - Union Territory Tax (Rate)
+          - Compensation Cess
+          - Compensation Cess (Rate)
+    parser:
+      content_selector: "cbic-content-page"
+      mode: auto
+      download_pdfs: true
+      extract_tables: false
+      strip_selectors:
+        - nav
+        - footer
+        - script
+        - style
+
   - name: icegate
     base_url: https://www.icegate.gov.in
     start_urls:

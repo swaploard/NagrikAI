@@ -7,6 +7,7 @@ from typing import Any
 from scrapy.crawler import CrawlerProcess
 
 from nagrik_ai.config.config_models import SiteConfig
+from nagrik_ai.crawler.spiders.cbic_taxinfo_spider import CbicTaxInfoSpider
 from nagrik_ai.crawler.spiders.site_spider import SiteSpider
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,8 @@ def site_spider_class(site_config: SiteConfig, max_depth: int | None = None) -> 
         "name": f"site_spider_{safe_name}",
         "custom_settings": spider_settings(site_config, max_depth=max_depth),
     }
-    return type(f"{safe_name.title().replace('_', '')}SiteSpider", (SiteSpider,), attributes)
+    spider_base = CbicTaxInfoSpider if site_config.name == "cbic_taxinfo" else SiteSpider
+    return type(f"{safe_name.title().replace('_', '')}SiteSpider", (spider_base,), attributes)
 
 
 def run_scrapy_crawl(
@@ -72,6 +74,13 @@ def run_batch_scrapy_crawl(
         "LOG_FORMATTER": "scrapy.logformatter.LogFormatter",
         "REQUEST_FINGERPRINTER_IMPLEMENTATION": "2.7",
         "TWISTED_REACTOR": "twisted.internet.asyncioreactor.AsyncioSelectorReactor",
+        "DOWNLOAD_HANDLERS": {
+            "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+            "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+        },
+        "PLAYWRIGHT_BROWSER_TYPE": "chromium",
+        "PLAYWRIGHT_MAX_CONTEXTS": 2,
+        "PLAYWRIGHT_MAX_PAGES_PER_CONTEXT": 4,
         "ITEM_PIPELINES": {
             "nagrik_ai.crawler.pipelines.DocumentSavePipeline": 300,
         },

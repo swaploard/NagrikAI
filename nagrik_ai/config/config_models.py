@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, model_validator
 
 load_dotenv()
 
@@ -64,7 +64,32 @@ class ParserConfig(BaseModel):
     strip_selectors: list[str] = ["nav", "footer", "script", "style"]
     fallback_to_body: bool = True
     output_format: str = "markdown"
+    mode: Literal["html", "pdf", "auto"] = "html"
+    download_pdfs: bool = False
+    extract_tables: bool = False
     markdown: MarkdownConfig = Field(default_factory=MarkdownConfig)
+
+
+class DiscoveryOptions(BaseModel):
+    """Optional, bounded discovery rules for sites that expose document indexes."""
+
+    follow_links: bool = True
+    allowed_path_patterns: list[str] = Field(default_factory=list)
+    browser_path_patterns: list[str] = Field(default_factory=list)
+    document_categories: list[str] = Field(default_factory=list)
+    tax_type: str | None = None
+    tax_id: int | None = None
+    languages: list[str] = Field(default_factory=lambda: ["en"])
+    years: list[int] = Field(default_factory=list)
+    max_pages: int = Field(default=1, ge=1)
+    max_documents: int = Field(default=50, ge=1)
+    page_size: int = Field(default=20, ge=1, le=100)
+    readiness_selector: str | None = None
+    completion_condition: Literal["selector", "network_idle", "response"] | None = None
+    api_routes: dict[str, str] = Field(default_factory=dict)
+    download_routes: dict[str, str] = Field(default_factory=dict)
+    category_filters: dict[str, list[str]] = Field(default_factory=dict)
+    public_headers: dict[str, str] = Field(default_factory=dict)
 
 
 class SiteConfig(BaseModel):
@@ -74,6 +99,19 @@ class SiteConfig(BaseModel):
     allowed_domains: list[str]
     crawler: CrawlerConfig = Field(default_factory=CrawlerConfig)
     parser: ParserConfig = Field(default_factory=ParserConfig)
+    discovery: DiscoveryOptions = Field(default_factory=DiscoveryOptions)
+
+    @model_validator(mode="after")
+    def validate_discovery_strategy(self) -> SiteConfig:
+        strategy = self.crawler.crawl_strategy
+        discovery = self.discovery
+        if strategy == "browser" and not (discovery.readiness_selector or discovery.completion_condition):
+            raise ValueError("browser crawl_strategy requires a readiness selector or completion condition")
+        if strategy == "html" and discovery.browser_path_patterns:
+            raise ValueError("browser_path_patterns require browser or hybrid crawl_strategy")
+        if discovery.tax_type and not discovery.tax_type.strip():
+            raise ValueError("tax_type cannot be blank")
+        return self
 
 
 class OpenRouterConfig(BaseModel):

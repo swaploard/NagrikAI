@@ -29,6 +29,12 @@ class DocumentSavePipeline:
         )
 
     def process_item(self, item: dict[str, object], spider: object | None = None) -> dict[str, object]:
+        # Phase 5 emits metadata-only candidates. Persistence is deliberately
+        # deferred until the normalized document contract is introduced.
+        if item.get("kind") == "discovery_candidate":
+            self.items.append(item)
+            return item
+
         if self.manifest is None:
             if spider is None:
                 raise RuntimeError("DocumentSavePipeline requires a spider")
