@@ -33,6 +33,7 @@ dependencies = [
     "langsmith>=0.3.0,<1",
     "langgraph-checkpoint-sqlite>=2.0,<3",
     "scrapy-playwright>=0.0.44,<1",
+    "pymupdf>=1.25,<2",
 ]
 
 [project.optional-dependencies]

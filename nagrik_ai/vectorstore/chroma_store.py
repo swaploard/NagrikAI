@@ -1,5 +1,6 @@
 """ChromaDB vector store abstraction using LangChain."""
 
+import json
 import logging
 import time
 from typing import Any, cast
@@ -19,6 +20,15 @@ STANDARD_METADATA_FIELDS: dict[str, type] = {
     "chunk_index": int,
     "total_chunks": int,
     "score": float,
+    "document_id": str,
+    "version_id": str,
+    "content_hash": str,
+    "chunk_id": str,
+    "page": int,
+    "citation_url": str,
+    "source_version_status": str,
+    "legal_applicability_status": str,
+    "retrieval_scope": str,
 }
 
 
@@ -26,8 +36,18 @@ def validate_metadata(meta: dict[Any, Any]) -> dict[str, Any]:
     """Fill missing fields with safe defaults; prevent NoneType crashes."""
     logger.debug("Validating metadata with keys: %s", list(meta.keys()))
     validated: dict[str, Any] = {}
+    for raw_key, raw_value in meta.items():
+        key = str(raw_key)
+        if raw_value is None:
+            continue
+        if isinstance(raw_value, (str, int, float, bool)):
+            validated[key] = raw_value
+        elif isinstance(raw_value, (list, tuple, set, dict)):
+            validated[key] = json.dumps(raw_value, sort_keys=True, default=str)
+        else:
+            validated[key] = str(raw_value)
     for key, typ in STANDARD_METADATA_FIELDS.items():
-        value = meta.get(key)
+        value = validated.get(key)
         if value is None:
             logger.debug("Metadata field '%s' missing, using default for type %s", key, typ.__name__)
             value = 0.0 if typ is float else (0 if typ is int else "")
@@ -146,6 +166,7 @@ class ChromaStore:
         self,
         query_text: str,
         k: int = 20,
+        scope: str = "all_versions",
     ) -> list[Document]:
         """Query the vector store by text using plain similarity search.
 
@@ -158,10 +179,11 @@ class ChromaStore:
         """
         search_start = time.perf_counter()
         try:
-            results: list[Document] = self.vector_db.similarity_search(
+            candidates: list[Document] = self.vector_db.similarity_search(
                 query=query_text,
-                k=k,
+                k=max(k * 4, k),
             )
+            results = self._filter_scope(candidates, scope)[:k]
 
             for doc in results:
                 self._enhance_document_with_citation(doc)
@@ -185,6 +207,7 @@ class ChromaStore:
         self,
         query_text: str,
         k: int = 20,
+        scope: str = "all_versions",
     ) -> list[tuple[Document, float]]:
         """Query the vector store and return docs paired with relevance scores.
 
@@ -196,10 +219,13 @@ class ChromaStore:
             List of (document, relevance score) pairs, score in [0, 1].
         """
         try:
-            results: list[tuple[Document, float]] = self.vector_db.similarity_search_with_relevance_scores(
+            candidates: list[tuple[Document, float]] = self.vector_db.similarity_search_with_relevance_scores(
                 query=query_text,
-                k=k,
+                k=max(k * 4, k),
             )
+            results = [(doc, score) for doc, score in candidates if self._in_scope(doc.metadata, scope)][:k]
+            for doc, _score in results:
+                doc.metadata["retrieval_scope"] = scope
             for doc, _score in results:
                 self._enhance_document_with_citation(doc)
                 raw_metadata: dict[str, Any] | None = getattr(doc, "metadata", None)
@@ -217,6 +243,7 @@ class ChromaStore:
         n_results: int = 5,
         fetch_k: int = 20,
         lambda_mult: float = 0.7,
+        scope: str = "all_versions",
     ) -> list[Document]:
         """Query the vector store by text using MMR for diversity.
 
@@ -230,12 +257,13 @@ class ChromaStore:
             List of documents most relevant and diverse for the query
         """
         try:
-            results: list[Document] = self.vector_db.max_marginal_relevance_search(
+            candidates: list[Document] = self.vector_db.max_marginal_relevance_search(
                 query=query_text,
-                k=n_results,
-                fetch_k=fetch_k,
+                k=max(n_results * 4, n_results),
+                fetch_k=max(fetch_k, n_results * 4),
                 lambda_mult=lambda_mult,
             )
+            results = self._filter_scope(candidates, scope)[:n_results]
 
             # Enhance results with citation information
             for doc in results:
@@ -333,7 +361,7 @@ class ChromaStore:
             logger.exception("Failed to get all documents")
             return []
 
-    def add_documents(self, documents: list[Document]) -> list[str]:
+    def add_documents(self, documents: list[Document], ids: list[str] | None = None) -> list[str]:
         """Add documents to the vector store.
 
         Args:
@@ -346,10 +374,35 @@ class ChromaStore:
             for doc in documents:
                 raw_metadata: dict[str, Any] = getattr(doc, "metadata", {})
                 doc.metadata = validate_metadata(raw_metadata)
-            return self.vector_db.add_documents(documents)
+            if ids is None:
+                return self.vector_db.add_documents(documents)
+            return self.vector_db.add_documents(documents, ids=ids)
         except Exception:
             logger.exception("Failed to add documents")
             raise
+
+    def index_state(self, document_id: str, version_id: str) -> dict[str, set[str]]:
+        result = self.vector_db.get(
+            where={"$and": [{"document_id": document_id}, {"version_id": version_id}]},
+            include=["metadatas"],
+        )
+        state: dict[str, set[str]] = {}
+        for chunk_id, metadata in zip(result.get("ids", []), result.get("metadatas", []), strict=False):
+            raw_scopes = dict(metadata or {}).get("retrieval_scopes", "[]")
+            if isinstance(raw_scopes, str):
+                try:
+                    decoded = json.loads(raw_scopes)
+                    scopes = {str(value) for value in decoded} if isinstance(decoded, list) else {raw_scopes}
+                except json.JSONDecodeError:
+                    scopes = {raw_scopes}
+            else:
+                scopes = {str(value) for value in raw_scopes} if isinstance(raw_scopes, list) else set()
+            state[str(chunk_id)] = scopes
+        return state
+
+    def delete_chunks(self, chunk_ids: list[str]) -> None:
+        if chunk_ids:
+            self.vector_db.delete(ids=chunk_ids)
 
     def _enhance_document_with_citation(self, doc: Any) -> None:
         """Enhance a document with citation information.
@@ -368,3 +421,29 @@ class ChromaStore:
             md["citation_url"] = md["url"]
 
         doc.metadata = md
+
+    @classmethod
+    def _filter_scope(cls, documents: list[Document], scope: str) -> list[Document]:
+        filtered = [document for document in documents if cls._in_scope(document.metadata, scope)]
+        for document in filtered:
+            document.metadata["retrieval_scope"] = scope
+        return filtered
+
+    @staticmethod
+    def _in_scope(metadata: dict[str, Any], scope: str) -> bool:
+        if scope == "all_versions":
+            return True
+        raw_scopes = metadata.get("retrieval_scopes", [])
+        if isinstance(raw_scopes, str):
+            try:
+                parsed = json.loads(raw_scopes)
+                scopes = parsed if isinstance(parsed, list) else [raw_scopes]
+            except json.JSONDecodeError:
+                scopes = [raw_scopes]
+        elif isinstance(raw_scopes, list):
+            scopes = raw_scopes
+        else:
+            scopes = []
+        if scope == "legally_applicable":
+            return metadata.get("legal_applicability_status") == "applicable" and scope in scopes
+        return scope in scopes or metadata.get("source_version_status") == scope

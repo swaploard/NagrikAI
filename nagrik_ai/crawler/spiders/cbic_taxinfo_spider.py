@@ -12,7 +12,7 @@ from scrapy.http import Response
 
 from nagrik_ai.config.config_models import SiteConfig
 from nagrik_ai.crawler.spiders.site_spider import SiteSpider
-from nagrik_ai.crawler.url_utils import source_id_for_url
+from nagrik_ai.crawler.url_utils import document_id_for_identifier, source_id_for_url
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ class CbicTaxInfoSpider(SiteSpider):
                 break
             if not self._is_required_tax(record):
                 continue
-            yield from self._record_candidates(category, record)
+            yield from self._record_candidates(category, record, response.url)
 
         discovery = self.site_config.discovery
         route = discovery.api_routes.get(category)
@@ -180,6 +180,7 @@ class CbicTaxInfoSpider(SiteSpider):
         self,
         category: str,
         record: Mapping[str, Any],
+        listing_url: str,
     ) -> Iterator[dict[str, object]]:
         portal_id = record.get("id")
         if portal_id is None:
@@ -201,15 +202,19 @@ class CbicTaxInfoSpider(SiteSpider):
             download_url = self._download_url(category, portal_id, portal_language)
             self._candidate_count += 1
             yield {
+                "schema_version": "1.0",
                 "kind": "discovery_candidate",
-                "status": "discovered",
-                "url": source_url,
                 "source_id": source_id_for_url(source_url),
+                "document_id": document_id_for_identifier("cbic-taxinfo", f"{category}:{portal_id}"),
                 "record_id": record_key,
                 "portal_record_id": str(portal_id),
                 "content_id": str(record.get("contentId", "")),
+                "observed_url": source_url,
+                "canonical_url": source_url,
+                "listing_url": listing_url,
+                "site": self.site_config.name,
                 "category": category,
-                "tax_type": self.site_config.discovery.tax_type,
+                "tax_type": self.site_config.discovery.tax_type or "",
                 "language": language,
                 "title": title,
                 "download_url": download_url,
@@ -222,6 +227,7 @@ class CbicTaxInfoSpider(SiteSpider):
                     ),
                     "portal_language": portal_language,
                 },
+                "raw_record": dict(record),
             }
 
     def _source_url(self, category: str, portal_id: object, portal_language: str) -> str:

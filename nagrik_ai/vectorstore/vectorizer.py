@@ -8,6 +8,7 @@ from langchain_core.documents import Document
 
 from nagrik_ai.utils.markdown_utils import find_markdown_files, read_markdown_file
 from nagrik_ai.vectorstore.chroma_store import ChromaStore, validate_metadata
+from nagrik_ai.vectorstore.legal_chunker import LegalChunker
 
 
 class TextSplitter(Protocol):
@@ -29,9 +30,17 @@ class MarkdownVectorizer:
         self,
         chroma_store: ChromaStore,
         text_splitter: TextSplitter,
+        legal_chunker: LegalChunker | None = None,
+        embedding_provider: str = "unknown",
+        embedding_model: str = "unknown",
+        embedding_model_version: str = "unknown",
     ) -> None:
         self.chroma_store = chroma_store
         self.text_splitter = text_splitter
+        self.legal_chunker = legal_chunker or LegalChunker()
+        self.embedding_provider = embedding_provider
+        self.embedding_model = embedding_model
+        self.embedding_model_version = embedding_model_version
 
         logger.debug("Initialized MarkdownVectorizer")
 
@@ -78,12 +87,13 @@ class MarkdownVectorizer:
                     metadata=self._prepare_metadata(metadata, file_path),
                 )
 
-                chunks = self.text_splitter.split_documents([doc])
+                chunks = self._split(doc, content)
 
                 for i, chunk in enumerate(chunks):
                     md = self._normalize_metadata(getattr(chunk, "metadata", None))
                     md["chunk_index"] = i
                     md["total_chunks"] = len(chunks)
+                    self._add_lineage(md)
                     chunk.metadata = validate_metadata(md)
 
                 all_documents.extend(chunks)
@@ -97,7 +107,8 @@ class MarkdownVectorizer:
                 logger.exception("Error processing file %s", file_path)
 
         if all_documents:
-            self.chroma_store.add_documents(all_documents)
+            ids = [str(document.metadata.get("chunk_id", "")) for document in all_documents]
+            self.chroma_store.add_documents(all_documents, ids=ids if all(ids) else None)
 
         return len(all_documents)
 
@@ -147,15 +158,17 @@ class MarkdownVectorizer:
                 metadata=self._prepare_metadata(metadata, file_path),
             )
 
-            chunks = self.text_splitter.split_documents([doc])
+            chunks = self._split(doc, content)
 
             for i, chunk in enumerate(chunks):
                 md = self._normalize_metadata(getattr(chunk, "metadata", None))
                 md["chunk_index"] = i
                 md["total_chunks"] = len(chunks)
+                self._add_lineage(md)
                 chunk.metadata = validate_metadata(md)
 
-            self.chroma_store.add_documents(chunks)
+            ids = [str(chunk.metadata.get("chunk_id", "")) for chunk in chunks]
+            self.chroma_store.add_documents(chunks, ids=ids if all(ids) else None)
 
             logger.debug(
                 "Added document %s with embeddings",
@@ -167,3 +180,16 @@ class MarkdownVectorizer:
         except Exception:
             logger.exception("Error processing file %s", file_path)
             return 0
+
+    def _split(self, document: Document, content: str) -> list[Document]:
+        metadata = self._normalize_metadata(document.metadata)
+        if metadata.get("document_id") and metadata.get("version_id"):
+            return self.legal_chunker.chunk_markdown(content, metadata)
+        return self.text_splitter.split_documents([document])
+
+    def _add_lineage(self, metadata: dict[str, Any]) -> None:
+        metadata["embedding_provider"] = self.embedding_provider
+        metadata["embedding_model"] = self.embedding_model
+        metadata["embedding_model_version"] = self.embedding_model_version
+        metadata.setdefault("chunker_name", self.legal_chunker.name)
+        metadata.setdefault("chunker_version", self.legal_chunker.version)

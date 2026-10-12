@@ -244,7 +244,7 @@ class DocumentRetrievalService:
             )
         return metadata_list
 
-    def retrieve(self, query: str) -> list[dict[str, Any]]:
+    def retrieve(self, query: str, scope: str = "all_versions") -> list[dict[str, Any]]:
         if self.hybrid_search and self.bm25_retriever is not None:
             strategy = "hybrid+reranker" if self.reranker is not None else "hybrid"
         elif self.reranker is not None:
@@ -260,6 +260,7 @@ class DocumentRetrievalService:
             "lambda_mult": self.lambda_mult,
             "strategy": strategy,
             "authority_ranking_enabled": self.authority_ranking_enabled,
+            "retrieval_scope": scope,
         }
         with self.tracer.trace(
             "retrieve_documents",
@@ -276,9 +277,9 @@ class DocumentRetrievalService:
             candidates: list[dict[str, Any]]
             did_rerank = False
             if self.hybrid_search and self.bm25_retriever is not None:
-                dense_docs = self.chroma_store.similarity_search(query, k=self.fetch_k)
+                dense_docs = self.chroma_store.similarity_search(query, k=self.fetch_k, scope=scope)
                 dense_results = self._docs_to_dicts(dense_docs)
-                bm25_results = self.bm25_retriever.retrieve(query, k=self.fetch_k)
+                bm25_results = self.bm25_retriever.retrieve(query, k=self.fetch_k, scope=scope)
                 candidates = self._reciprocal_rank_fusion(dense_results, bm25_results)
                 logger.debug(
                     "Hybrid search: dense=%d, bm25=%d, fused=%d",
@@ -290,12 +291,12 @@ class DocumentRetrievalService:
                     candidates = self.reranker.rerank(query, candidates)
                     did_rerank = True
             elif self.reranker is not None:
-                docs = self.chroma_store.similarity_search(query, k=self.fetch_k)
+                docs = self.chroma_store.similarity_search(query, k=self.fetch_k, scope=scope)
                 candidates = self._docs_to_dicts(docs)
                 candidates = self.reranker.rerank(query, candidates)
                 did_rerank = True
             else:
-                scored_docs = self.chroma_store.similarity_search_with_scores(query, k=self.fetch_k)
+                scored_docs = self.chroma_store.similarity_search_with_scores(query, k=self.fetch_k, scope=scope)
                 candidates = self._docs_to_dicts(
                     [doc for doc, _score in scored_docs],
                     [score for _doc, score in scored_docs],
@@ -306,6 +307,10 @@ class DocumentRetrievalService:
                     doc["reranked"] = True
 
             result = self._select_with_authority_bias(candidates)
+            for document in result:
+                metadata = document.setdefault("metadata", {})
+                if isinstance(metadata, dict):
+                    metadata["retrieval_scope"] = scope
             logger.info("Retrieved %d documents", len(result))
             _log_retrieved_docs(result)
             latency = span.elapsed_ms()

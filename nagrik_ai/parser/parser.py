@@ -20,6 +20,9 @@ from lxml import html
 
 from nagrik_ai.config.config_models import SiteConfig
 from nagrik_ai.crawler.crawl_manifest import CrawlManifest, ManifestRecord
+from nagrik_ai.models.document import NormalizedDocument
+from nagrik_ai.parser.gst_document_parser import GSTDocumentParser
+from nagrik_ai.parser.normalized_markdown import render_normalized_markdown
 
 MIN_NESTED_PATH_PARTS = 2
 
@@ -363,9 +366,19 @@ class Parser:
         )
         with self._create_directory_scope() as scoped_dir:
             results: list[dict[str, Any]] = []
+            normalized_versions: set[str] = set()
+            records_dir = Path(self.output_dir) / "records"
+            for record_file in records_dir.rglob("*.json") if records_dir.exists() else []:
+                result = self.parse_normalized_file(record_file)
+                if result:
+                    results.append(result)
+                    normalized_versions.add(str(result["version_id"]))
             html_files = list(Path(scoped_dir).rglob("*.html"))
             self.logger.info("Found %d HTML files to parse", len(html_files))
             for html_file in html_files:
+                version = self.manifest.version_for_local_path(html_file)
+                if version is not None and version.version_id in normalized_versions:
+                    continue
                 try:
                     result = self._parse_file_with_context(html_file)
                     if result:
@@ -376,6 +389,28 @@ class Parser:
                 self._create_index(results)
             self.logger.info("Parsed %d files", len(results))
             return results
+
+    def parse_normalized_file(self, record_file: str | Path) -> dict[str, Any] | None:
+        path = Path(record_file)
+        try:
+            document = NormalizedDocument.model_validate_json(path.read_text(encoding="utf-8"))
+            parsed = GSTDocumentParser().parse(document)
+            storage_id = self.manifest._storage_segment(parsed.document_id)
+            output = Path(self.output_dir) / "documents" / storage_id / f"{parsed.version_id}.md"
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(render_normalized_markdown(parsed), encoding="utf-8")
+            if parsed.version_id in self.manifest.state.versions:
+                self.manifest.register_parsed_artifact(parsed.version_id, output)
+            return {
+                "source_file": str(path),
+                "output_file": str(output),
+                "title": parsed.title or parsed.legal_metadata.subject or "Untitled",
+                "domain": parsed.site,
+                "version_id": parsed.version_id,
+            }
+        except Exception:
+            self.logger.exception("Error parsing normalized document %s", path)
+            return None
 
     def _create_index(self, results: list[dict[str, Any]]) -> str:
         index_path = Path(self.output_dir) / "index.md"

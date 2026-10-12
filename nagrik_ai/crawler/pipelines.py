@@ -7,6 +7,9 @@ from typing import Protocol, cast
 
 from nagrik_ai.config.config_models import SiteConfig
 from nagrik_ai.crawler.crawl_manifest import CrawlManifest, FetchStatus, ManifestRecord
+from nagrik_ai.crawler.url_utils import source_id_for_url
+from nagrik_ai.models.document import DiscoveryCandidate
+from nagrik_ai.parser.document_pipeline import mark_previous_normalized_version_historical, normalize_source
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +32,63 @@ class DocumentSavePipeline:
         )
 
     def process_item(self, item: dict[str, object], spider: object | None = None) -> dict[str, object]:
-        # Phase 5 emits metadata-only candidates. Persistence is deliberately
-        # deferred until the normalized document contract is introduced.
         if item.get("kind") == "discovery_candidate":
+            candidate = DiscoveryCandidate.model_validate(item)
+            if candidate.source_id != source_id_for_url(candidate.canonical_url):
+                raise ValueError("Discovery candidate source_id does not match canonical_url")
+            if self.manifest is None:
+                if spider is None:
+                    raise RuntimeError("DocumentSavePipeline requires a spider")
+                self.open_spider(spider)
+            manifest = self.manifest
+            if manifest is None:
+                raise RuntimeError("DocumentSavePipeline could not initialize a manifest")
+            raw = (json.dumps(candidate.raw_record, sort_keys=True, ensure_ascii=False) + "\n").encode()
+            candidate_version, created = manifest.store_response(
+                url=candidate.canonical_url,
+                content=raw,
+                content_type="application/json",
+                title=candidate.title,
+                fetch_time=candidate.discovered_at.isoformat(),
+            )
+            manifest.resolve_document_identity(
+                source_id=candidate_version.source_id,
+                document_id=candidate.document_id,
+                method="portal_record_id",
+                evidence={"record_id": candidate.portal_record_id, "category": candidate.category},
+                confidence=1.0,
+            )
+            candidate_version = manifest.state.versions[candidate_version.version_id]
+            discovery_metadata = dict(candidate.metadata)
+            discovery_metadata.update(
+                {
+                    "category": candidate.category,
+                    "tax_type": candidate.tax_type,
+                    "portal_record_id": candidate.portal_record_id,
+                    "record_id": candidate.record_id,
+                    "listing_url": candidate.listing_url,
+                }
+            )
+            normalized, normalized_path = normalize_source(
+                manifest,
+                candidate_version,
+                raw,
+                document_id=candidate.document_id,
+                language=candidate.language,
+                discovered_metadata=discovery_metadata,
+                official_file_url=candidate.download_url,
+                provenance_url=candidate.listing_url,
+                provenance_method="portal_json_discovery",
+            )
+            if created:
+                mark_previous_normalized_version_historical(manifest, candidate_version)
+            item["url"] = candidate.canonical_url
+            item["status"] = "success" if created else "unchanged"
+            item["version_id"] = candidate_version.version_id
+            item["content_hash"] = candidate_version.content_hash
+            item["local_path"] = candidate_version.local_path
+            item["normalized_path"] = normalized_path.relative_to(manifest.site_root).as_posix()
+            item["normalized_document"] = normalized.model_dump(mode="json")
             self.items.append(item)
             return item
 
@@ -57,6 +114,31 @@ class DocumentSavePipeline:
                 title=str(item.get("title", "")),
             )
             item["status"] = "success" if created else "unchanged"
+            try:
+                normalized, normalized_path = normalize_source(
+                    manifest,
+                    version,
+                    body,
+                    language=str(item.get("language", "en")),
+                )
+                if created:
+                    mark_previous_normalized_version_historical(manifest, version)
+                item["normalized_path"] = normalized_path.relative_to(manifest.site_root).as_posix()
+                item["normalized_document"] = normalized.model_dump(mode="json")
+                if normalized.source_format == "unsupported":
+                    item["status"] = "incomplete"
+                    raw_http_status = item.get("http_status")
+                    manifest.record_outcome(
+                        url=url,
+                        status="incomplete",
+                        http_status=raw_http_status if isinstance(raw_http_status, int) else None,
+                        error="Unsupported content type or byte signature",
+                    )
+            except Exception as exc:
+                logger.exception("Could not normalize %s", url)
+                item["status"] = "incomplete"
+                item["error"] = str(exc)
+                manifest.record_outcome(url=url, status="incomplete", error=str(exc))
         elif status == "reused":
             version = manifest.mark_reused(url)
             if version is None:
