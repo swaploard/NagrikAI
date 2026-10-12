@@ -171,9 +171,7 @@ class IndexOutbox:
             expected_chunk_ids=normalized_chunk_ids,
             fingerprint=fingerprint,
         )
-        payload = operation.model_copy(
-            update={"state": "complete", "last_error": None}
-        ).model_dump_json()
+        payload = operation.model_dump_json()
         state_key = hashlib.sha256(f"{document_id}\n{target_version_id}".encode()).hexdigest()
         with self._connect() as connection:
             row = connection.execute(
@@ -238,7 +236,9 @@ class IndexOutbox:
         desired_scopes = set(operation.desired_scopes)
         if any(scopes != desired_scopes for scopes in observed.values()):
             raise ValueError("observed retrieval scopes do not match the desired index state")
-        payload = operation.model_copy(update={"state": "pending", "attempts": 0, "last_error": None}).model_dump_json()
+        payload = operation.model_copy(
+            update={"state": "complete", "attempts": operation.attempts, "last_error": None}
+        ).model_dump_json()
         with self._connect() as connection:
             desired = connection.execute(
                 """

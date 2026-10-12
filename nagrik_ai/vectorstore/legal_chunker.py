@@ -44,6 +44,11 @@ class LegalChunker:
     def chunk_markdown(self, content: str, metadata: dict[str, object]) -> list[Document]:
         document_id = str(metadata["document_id"])
         version_id = str(metadata["version_id"])
+        legal_metadata = metadata.get("legal_metadata")
+        legal = legal_metadata if isinstance(legal_metadata, dict) else {}
+        enriched_metadata = dict(metadata)
+        for field in ("hsn_sac_codes", "amendment_document_ids", "referenced_document_urls"):
+            enriched_metadata.setdefault(field, legal.get(field, []))
         source_type = str(metadata.get("document_type") or metadata.get("source_type") or "unstructured")
         source_status = str(metadata.get("source_version_status") or "current_source")
         applicability_status = str(metadata.get("legal_applicability_status") or "unknown")
@@ -62,7 +67,7 @@ class LegalChunker:
             for part_index, part in enumerate(self._split(page, source_type)):
                 location = f"page:{page_number}:part:{part_index}"
                 chunk_id = self.chunk_id(document_id, version_id, location)
-                chunk_metadata = dict(metadata)
+                chunk_metadata = dict(enriched_metadata)
                 chunk_metadata.update(
                     {
                         "chunk_id": chunk_id,
@@ -86,7 +91,7 @@ class LegalChunker:
                     str(row.get(key, "")) for key in ("schedule", "heading", "condition") if row.get(key)
                 )
                 cells = " | ".join(f"{key}: {value}" for key, value in row.get("cells", {}).items())
-                chunk_metadata = dict(metadata)
+                chunk_metadata = dict(enriched_metadata)
                 chunk_metadata.update(
                     {
                         "chunk_id": self.chunk_id(document_id, version_id, location),
@@ -123,11 +128,15 @@ class LegalChunker:
             "version_id": document.version_id,
             "content_hash": document.content_hash,
             "document_number": document.legal_metadata.document_number or "",
+            "hsn_sac_codes": document.legal_metadata.hsn_sac_codes,
+            "amendment_document_ids": document.legal_metadata.amendment_document_ids,
+            "referenced_document_urls": document.legal_metadata.referenced_document_urls,
             "publication_date": document.legal_metadata.publication_date.value or "",
             "page": page_number or 0,
             "citation_url": document.canonical_url,
             "source_url": document.canonical_url,
             "source_type": source_type,
+            "source_format": document.source_format,
             "logical_location": location,
             "schema_version": document.schema_version,
             "parser_name": document.extraction.parser_name,

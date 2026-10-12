@@ -32,6 +32,8 @@ parse_app = typer.Typer(name="parse")
 app.add_typer(parse_app, name="parse", help="Parse crawled HTML into Markdown")
 vectorize_app = typer.Typer(name="vectorize")
 app.add_typer(vectorize_app, name="vectorize", help="Vectorize parsed documents into ChromaDB")
+acceptance_app = typer.Typer(name="acceptance")
+app.add_typer(acceptance_app, name="acceptance", help="Audit a bounded CBIC rollout")
 
 
 @crawl_app.command()
@@ -39,6 +41,14 @@ def sites(
     config_path: Annotated[Path | None, typer.Option("--config", "-c", help="Path to site config YAML")] = None,
     output_dir: Annotated[Path, typer.Option("--output", "-o", help="Output directory")] = CONTENT_DIR,
     depth: Annotated[int | None, typer.Option("--depth", "-d", help="Override each site's max crawl depth")] = None,
+    page_cap: Annotated[
+        int | None,
+        typer.Option("--page-cap", min=1, help="Stop after this many downloaded responses"),
+    ] = None,
+    document_cap: Annotated[
+        int | None,
+        typer.Option("--document-cap", min=1, help="Stop after this many emitted document items"),
+    ] = None,
     site_names: Annotated[
         list[str] | None,
         typer.Option("--site", "-s", help="Site name(s) to crawl (can be repeated, e.g. -s gst -s gst_tutorial)"),
@@ -73,10 +83,25 @@ def sites(
     # Each job is a tuple: (site_config, output_directory, manage_flag)
     jobs: list[tuple[SiteConfig, Path, bool]] = []
     for site in sites_to_crawl:
+        if document_cap is not None:
+            site = site.model_copy(
+                update={
+                    "discovery": site.discovery.model_copy(
+                        update={"max_documents": min(site.discovery.max_documents, document_cap)}
+                    )
+                }
+            )
         typer.echo(f"Crawling {site.name}...")
         crawled_dir = output_dir / site.name / "crawled"
         jobs.append((site, crawled_dir, manage))
-    run_batch_scrapy_crawl(jobs, max_depth=depth, force=force, incremental=incremental)
+    run_batch_scrapy_crawl(
+        jobs,
+        max_depth=depth,
+        force=force,
+        incremental=incremental,
+        page_limit=page_cap,
+        document_limit=document_cap,
+    )
 
 
 @crawl_app.command("reconcile")
@@ -161,6 +186,67 @@ def vectorize(
         typer.echo(f"Vectorizing {site_dir.name}...")
         count = vectorizer.process_directory(str(parsed))
         typer.echo(f"  Added {count} files")
+    from nagrik_ai.vectorstore.index_snapshot import capture_index_snapshot, write_index_snapshot
+
+    snapshot_path = persist_dir / "acceptance_index_snapshot.json"
+    snapshot = capture_index_snapshot(chroma_store)
+    write_index_snapshot(snapshot, snapshot_path)
+    typer.echo(f"Index snapshot: {snapshot_path} ({snapshot.total_entries} entries)")
+
+
+@acceptance_app.command("audit")
+def acceptance_audit(
+    site_root: Annotated[Path, typer.Argument(help="Site directory containing crawled/, parsed/, and manifests/")],
+    page_cap: Annotated[int, typer.Option("--page-cap", min=1, max=50)] = 20,
+    document_cap: Annotated[int, typer.Option("--document-cap", min=1, max=100)] = 25,
+    depth: Annotated[int, typer.Option("--depth", min=0, max=2)] = 0,
+    sample_size: Annotated[int, typer.Option("--sample-size", min=1, max=25)] = 5,
+    review_ledger: Annotated[Path | None, typer.Option("--review-ledger")] = None,
+    index_db: Annotated[Path | None, typer.Option("--index-db")] = None,
+    vector_snapshot: Annotated[Path | None, typer.Option("--vector-snapshot")] = None,
+    output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
+    gate: Annotated[bool, typer.Option("--gate", help="Exit unsuccessfully unless every rollout gate passes")] = False,
+) -> None:
+    from nagrik_ai.acceptance import CrawlLimits, build_acceptance_report, write_acceptance_report
+
+    report_path = output or site_root / "reports" / "acceptance.json"
+    report = build_acceptance_report(
+        site_root,
+        CrawlLimits(page_cap=page_cap, document_cap=document_cap, depth=depth),
+        sample_size=sample_size,
+        review_ledger_path=review_ledger,
+        index_db_path=index_db,
+        vector_snapshot_path=vector_snapshot,
+    )
+    write_acceptance_report(report, report_path)
+    typer.echo(f"Acceptance report: {report_path}")
+    typer.echo(
+        "Manifest outcomes: "
+        + ", ".join(f"{status}={count}" for status, count in report.manifest_status_counts.items())
+    )
+    typer.echo(
+        f"Corpus: sources={report.snapshot.source_count}, versions={report.snapshot.content_version_count}, "
+        f"normalized={report.snapshot.normalized_document_count}, chunks={report.snapshot.chunk_count}"
+    )
+    typer.echo(f"Rollout ready: {'yes' if report.rollout_ready else 'no'}")
+    if gate and not report.rollout_ready:
+        for error in report.validation_errors:
+            typer.echo(f"- {error}", err=True)
+        raise typer.Exit(1)
+
+
+@acceptance_app.command("compare")
+def acceptance_compare(
+    first: Annotated[Path, typer.Argument(help="Acceptance report from the first full run")],
+    second: Annotated[Path, typer.Argument(help="Acceptance report from the second full run")],
+) -> None:
+    from nagrik_ai.acceptance import compare_acceptance_reports
+
+    differences = compare_acceptance_reports(first, second)
+    if differences:
+        typer.echo(f"Non-idempotent fields: {', '.join(differences)}", err=True)
+        raise typer.Exit(1)
+    typer.echo("Semantic corpus and index state are idempotent.")
 
 
 trace_app = typer.Typer(name="trace")

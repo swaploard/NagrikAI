@@ -13,10 +13,15 @@ from nagrik_ai.crawler.spiders.site_spider import SiteSpider
 logger = logging.getLogger(__name__)
 
 
-def spider_settings(site_config: SiteConfig, max_depth: int | None = None) -> dict[str, Any]:
+def spider_settings(
+    site_config: SiteConfig,
+    max_depth: int | None = None,
+    page_limit: int | None = None,
+    document_limit: int | None = None,
+) -> dict[str, Any]:
     crawler = site_config.crawler
     depth = crawler.max_depth if max_depth is None else max_depth
-    return {
+    settings = {
         "USER_AGENT": crawler.user_agent,
         "CONCURRENT_REQUESTS": crawler.max_concurrency,
         "CONCURRENT_REQUESTS_PER_DOMAIN": crawler.per_domain_concurrency,
@@ -30,13 +35,28 @@ def spider_settings(site_config: SiteConfig, max_depth: int | None = None) -> di
         "AUTOTHROTTLE_TARGET_CONCURRENCY": crawler.autothrottle_target_concurrency,
         "HTTPERROR_ALLOW_ALL": True,
     }
+    if page_limit is not None:
+        settings["CLOSESPIDER_PAGECOUNT"] = page_limit
+    if document_limit is not None:
+        settings["CLOSESPIDER_ITEMCOUNT"] = document_limit
+    return settings
 
 
-def site_spider_class(site_config: SiteConfig, max_depth: int | None = None) -> type[SiteSpider]:
+def site_spider_class(
+    site_config: SiteConfig,
+    max_depth: int | None = None,
+    page_limit: int | None = None,
+    document_limit: int | None = None,
+) -> type[SiteSpider]:
     safe_name = "".join(character if character.isalnum() else "_" for character in site_config.name)
     attributes: dict[str, Any] = {
         "name": f"site_spider_{safe_name}",
-        "custom_settings": spider_settings(site_config, max_depth=max_depth),
+        "custom_settings": spider_settings(
+            site_config,
+            max_depth=max_depth,
+            page_limit=page_limit,
+            document_limit=document_limit,
+        ),
     }
     spider_base = CbicTaxInfoSpider if site_config.name == "cbic_taxinfo" else SiteSpider
     return type(f"{safe_name.title().replace('_', '')}SiteSpider", (spider_base,), attributes)
@@ -49,12 +69,16 @@ def run_scrapy_crawl(
     manage: bool = False,
     force: bool = False,
     incremental: bool = False,
+    page_limit: int | None = None,
+    document_limit: int | None = None,
 ) -> int:
     return run_batch_scrapy_crawl(
         [(site_config, output_dir, manage)],
         max_depth=max_depth,
         force=force,
         incremental=incremental,
+        page_limit=page_limit,
+        document_limit=document_limit,
     )
 
 
@@ -63,6 +87,8 @@ def run_batch_scrapy_crawl(
     max_depth: int | None = None,
     force: bool = False,
     incremental: bool = False,
+    page_limit: int | None = None,
+    document_limit: int | None = None,
 ) -> int:
     if not jobs:
         return 0
@@ -90,7 +116,12 @@ def run_batch_scrapy_crawl(
 
     for site_config, output_dir, manage in jobs:
         output_dir.mkdir(parents=True, exist_ok=True)
-        spider_class = site_spider_class(site_config, max_depth=max_depth)
+        spider_class = site_spider_class(
+            site_config,
+            max_depth=max_depth,
+            page_limit=page_limit,
+            document_limit=document_limit,
+        )
         process.crawl(
             spider_class,
             site_config=site_config,

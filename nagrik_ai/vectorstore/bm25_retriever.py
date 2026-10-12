@@ -4,20 +4,24 @@ import json
 import logging
 import re
 import time
-from typing import Any
+from typing import Any, Protocol
 
 from langchain_core.documents import Document
 from rank_bm25 import BM25Okapi
 
-from nagrik_ai.vectorstore.chroma_store import ChromaStore, validate_metadata
+from nagrik_ai.vectorstore.chroma_store import validate_metadata
 
 logger = logging.getLogger(__name__)
+
+
+class DocumentSource(Protocol):
+    def get_all_documents(self) -> list[Document]: ...
 
 
 class BM25Retriever:
     def __init__(
         self,
-        chroma_store: ChromaStore,
+        chroma_store: DocumentSource,
         k1: float = 1.5,
         b: float = 0.75,
     ) -> None:
@@ -80,16 +84,24 @@ class BM25Retriever:
             if self._in_scope(document["metadata"], scope)
         ]
         exact_tokens = set(tokenized_query)
+
+        def identifier_bonus(index: int) -> float:
+            metadata = self._documents[index]["metadata"]
+            identifiers = " ".join(
+                str(metadata.get(field, ""))
+                for field in (
+                    "document_number",
+                    "hsn_sac_codes",
+                    "amendment_document_ids",
+                    "referenced_document_urls",
+                    "logical_location",
+                )
+            )
+            return 2.0 * len(exact_tokens & set(self._tokenize(identifiers)))
+
         top_indices = sorted(
             eligible,
-            key=lambda i: (
-                float(scores[i])
-                + 2.0
-                * len(
-                    exact_tokens
-                    & set(self._tokenize(str(self._documents[i]["metadata"].get("document_number", ""))))
-                )
-            ),
+            key=lambda i: float(scores[i]) + identifier_bonus(i),
             reverse=True,
         )[:k]
         results = [dict(self._documents[i]) for i in top_indices]
