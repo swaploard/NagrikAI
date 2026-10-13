@@ -22,6 +22,8 @@ class IndexFingerprint(BaseModel):
     schema_version: str
     parser_name: str
     parser_version: str
+    extraction_parser_name: str = ""
+    extraction_parser_version: str = ""
     chunker_name: str
     chunker_version: str
     embedding_provider: str
@@ -63,6 +65,8 @@ def reprocessing_plan(current: IndexFingerprint | None, desired: IndexFingerprin
         current.schema_version != desired.schema_version
         or current.parser_name != desired.parser_name
         or current.parser_version != desired.parser_version
+        or current.extraction_parser_name != desired.extraction_parser_name
+        or current.extraction_parser_version != desired.extraction_parser_version
     ):
         actions.extend(("parse", "chunk", "embed", "index"))
         reasons.append("parser_or_schema_changed")
@@ -115,6 +119,10 @@ class IndexOutbox:
                     last_error TEXT,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS index_chunk_payloads (
+                    operation_id TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS legal_relationships (
                     relationship_id TEXT PRIMARY KEY,
                     source_document_id TEXT NOT NULL,
@@ -151,6 +159,7 @@ class IndexOutbox:
         desired_scopes: list[RetrievalScope],
         expected_chunk_ids: list[str],
         fingerprint: IndexFingerprint,
+        chunk_payloads: list[dict[str, object]] | None = None,
     ) -> IndexOperation | None:
         normalized_scopes: list[RetrievalScope] = sorted(set(desired_scopes))
         normalized_chunk_ids = sorted(set(expected_chunk_ids))
@@ -174,6 +183,12 @@ class IndexOutbox:
         payload = operation.model_dump_json()
         state_key = hashlib.sha256(f"{document_id}\n{target_version_id}".encode()).hexdigest()
         with self._connect() as connection:
+            if chunk_payloads is not None:
+                connection.execute(
+                    "INSERT OR REPLACE INTO index_chunk_payloads VALUES (?, ?)",
+                    (operation_id, json.dumps(chunk_payloads, sort_keys=True)),
+                )
+                self._record_legal_payloads(connection, document_id, target_version_id, chunk_payloads)
             row = connection.execute(
                 "SELECT committed_payload, desired_operation_id FROM index_state WHERE state_key = ?",
                 (state_key,),
@@ -210,6 +225,77 @@ class IndexOutbox:
                 (state_key, document_id, target_version_id, operation_id, payload),
             )
         return operation
+
+    def chunk_payloads(self, operation_id: str) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM index_chunk_payloads WHERE operation_id = ?", (operation_id,)
+            ).fetchone()
+        if row is None:
+            raise ValueError("No durable chunk payload for index operation")
+        payload: list[dict[str, object]] = json.loads(row["payload"])
+        return payload
+
+    @staticmethod
+    def _record_legal_payloads(
+        connection: sqlite3.Connection,
+        document_id: str,
+        version_id: str,
+        chunks: list[dict[str, object]],
+    ) -> None:
+        connection.execute(
+            "DELETE FROM rate_records WHERE document_id = ? AND json_extract(provenance_json, '$.version_id') = ?",
+            (document_id, version_id),
+        )
+        connection.execute(
+            "DELETE FROM legal_relationships WHERE source_document_id = ? "
+            "AND json_extract(provenance_json, '$.version_id') = ?",
+            (document_id, version_id),
+        )
+        for chunk in chunks:
+            metadata = chunk.get("metadata")
+            if not isinstance(metadata, dict):
+                continue
+            raw_legal = metadata.get("legal_metadata", {})
+            legal = json.loads(raw_legal) if isinstance(raw_legal, str) else raw_legal
+            if isinstance(legal, dict):
+                applicability = legal.get("applicability", {})
+                if isinstance(applicability, dict):
+                    assertion_id = hashlib.sha256(f"{document_id}\n{version_id}\napplicability".encode()).hexdigest()
+                    start = applicability.get("effective_date", {})
+                    end = applicability.get("rescission_or_supersession_date", {})
+                    connection.execute(
+                        "INSERT OR REPLACE INTO applicability_facts VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            assertion_id, document_id, applicability.get("status", "unknown"),
+                            start.get("value") if isinstance(start, dict) else None,
+                            end.get("value") if isinstance(end, dict) else None,
+                            legal.get("subject"), json.dumps({"version_id": version_id, "facts": applicability}),
+                        ),
+                    )
+                for target in legal.get("amendment_document_ids", []):
+                    relationship_id = hashlib.sha256(f"{document_id}\n{version_id}\n{target}".encode()).hexdigest()
+                    connection.execute(
+                        "INSERT OR REPLACE INTO legal_relationships VALUES (?, ?, ?, ?, ?)",
+                        (relationship_id, document_id, target, "amendment", json.dumps(metadata, sort_keys=True)),
+                    )
+            raw_row = metadata.get("rate_row", {})
+            row = json.loads(raw_row) if isinstance(raw_row, str) else raw_row
+            if isinstance(row, dict) and isinstance(row.get("cells"), dict):
+                cells = row["cells"]
+                code = next((str(value) for key, value in cells.items() if "hsn" in key.lower()
+                             or "sac" in key.lower() or "chapter" in key.lower()), "")
+                rates = {key: value for key, value in cells.items() if "rate" in key.lower()
+                         or "tax" in key.lower() or "cess" in key.lower()}
+                connection.execute(
+                    "INSERT OR REPLACE INTO rate_records VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        str(metadata.get("chunk_id")), document_id, code,
+                        json.dumps(cells, sort_keys=True), json.dumps(rates, sort_keys=True),
+                        json.dumps([row.get("condition"), *row.get("footnotes", [])]),
+                        json.dumps({"version_id": version_id, "source_url": metadata.get("citation_url"), "row": row}),
+                    ),
+                )
 
     def pending(self) -> list[IndexOperation]:
         with self._connect() as connection:

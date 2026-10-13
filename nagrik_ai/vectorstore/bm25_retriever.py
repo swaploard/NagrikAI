@@ -30,6 +30,7 @@ class BM25Retriever:
         self.b = b
         self._bm25: Any = None
         self._documents: list[dict[str, Any]] = []
+        self._revision: object = None
 
     def invalidate(self) -> None:
         self._bm25 = None
@@ -69,6 +70,11 @@ class BM25Retriever:
         )
 
     def retrieve(self, query: str, k: int = 20, scope: str = "all_versions") -> list[dict[str, Any]]:
+        revision_reader = getattr(self.chroma_store, "retrieval_revision", None)
+        revision = revision_reader() if callable(revision_reader) else None
+        if revision != self._revision:
+            self.invalidate()
+            self._revision = revision
         if self._bm25 is None:
             self._build_index()
 
@@ -112,6 +118,8 @@ class BM25Retriever:
 
     @staticmethod
     def _in_scope(metadata: dict[str, Any], scope: str) -> bool:
+        if metadata.get("is_preamble"):
+            return False
         if scope == "all_versions":
             return True
         raw = metadata.get("retrieval_scopes", "[]")
@@ -125,4 +133,4 @@ class BM25Retriever:
             scopes = raw if isinstance(raw, list) else []
         if scope == "legally_applicable":
             return metadata.get("legal_applicability_status") == "applicable" and scope in scopes
-        return scope in scopes or metadata.get("source_version_status") == scope
+        return scope in scopes if scopes else metadata.get("source_version_status") == scope

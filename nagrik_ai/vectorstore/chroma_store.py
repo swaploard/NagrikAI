@@ -2,7 +2,9 @@
 
 import json
 import logging
+import sqlite3
 import time
+from pathlib import Path
 from typing import Any, cast
 
 from langchain_chroma import Chroma
@@ -96,6 +98,7 @@ class ChromaStore:
             ... )
         """
         self.embeddings = embeddings
+        self.index_db_path = Path(persist_directory) / "index_state.sqlite"
 
         # Initialize the vector store
         load_start = time.perf_counter()
@@ -223,7 +226,10 @@ class ChromaStore:
                 query=query_text,
                 k=max(k * 4, k),
             )
-            results = [(doc, score) for doc, score in candidates if self._in_scope(doc.metadata, scope)][:k]
+            results = [
+                (doc, score) for doc, score in candidates
+                if self._in_scope(doc.metadata, scope) and self._committed(doc.metadata)
+            ][:k]
             for doc, _score in results:
                 doc.metadata["retrieval_scope"] = scope
             for doc, _score in results:
@@ -296,6 +302,7 @@ class ChromaStore:
                 embedding,
                 k=n_results,
             )
+            results = [(doc, score) for doc, score in results if self._committed(doc.metadata)]
 
             # Enhance results with citation information
             for doc, _score in results:
@@ -355,7 +362,8 @@ class ChromaStore:
                 md = validate_metadata(md)
                 doc = Document(page_content=text or "", metadata=md)
                 self._enhance_document_with_citation(doc)
-                documents.append(doc)
+                if self._committed(md):
+                    documents.append(doc)
             return documents
         except Exception:
             logger.exception("Failed to get all documents")
@@ -422,15 +430,40 @@ class ChromaStore:
 
         doc.metadata = md
 
-    @classmethod
-    def _filter_scope(cls, documents: list[Document], scope: str) -> list[Document]:
-        filtered = [document for document in documents if cls._in_scope(document.metadata, scope)]
+    def _filter_scope(self, documents: list[Document], scope: str) -> list[Document]:
+        filtered = [
+            document for document in documents
+            if self._in_scope(document.metadata, scope) and self._committed(document.metadata)
+        ]
         for document in filtered:
             document.metadata["retrieval_scope"] = scope
         return filtered
 
+    def retrieval_revision(self) -> int:
+        return self.index_db_path.stat().st_mtime_ns if self.index_db_path.is_file() else 0
+
+    def _committed(self, metadata: dict[str, Any]) -> bool:
+        if not self.index_db_path.is_file():
+            return True
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = sqlite3.connect(f"file:{self.index_db_path.resolve()}?mode=ro", uri=True)
+            row = connection.execute(
+                "SELECT transition_state FROM index_state WHERE document_id = ? AND target_version_id = ?",
+                (metadata.get("document_id"), metadata.get("version_id")),
+            ).fetchone()
+            return row is None or row[0] == "complete"
+        except sqlite3.Error:
+            logger.exception("Cannot establish committed index state")
+            return False
+        finally:
+            if connection is not None:
+                connection.close()
+
     @staticmethod
     def _in_scope(metadata: dict[str, Any], scope: str) -> bool:
+        if metadata.get("is_preamble"):
+            return False
         if scope == "all_versions":
             return True
         raw_scopes = metadata.get("retrieval_scopes", [])
@@ -446,4 +479,4 @@ class ChromaStore:
             scopes = []
         if scope == "legally_applicable":
             return metadata.get("legal_applicability_status") == "applicable" and scope in scopes
-        return scope in scopes or metadata.get("source_version_status") == scope
+        return scope in scopes if scopes else metadata.get("source_version_status") == scope

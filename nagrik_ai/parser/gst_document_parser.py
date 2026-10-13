@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import ClassVar
 
 from nagrik_ai.crawler.url_utils import document_id_for_identifier
@@ -9,7 +10,7 @@ from nagrik_ai.models.document import LegalApplicability, LegalFact, LegalMetada
 
 class GSTDocumentParser:
     parser_name = "GSTDocumentParser"
-    parser_version = "1.0"
+    parser_version = "1.1"
 
     _number_patterns: ClassVar[dict[str, re.Pattern[str]]] = {
         "notification": re.compile(
@@ -23,22 +24,41 @@ class GSTDocumentParser:
         "instruction": re.compile(r"\b(Instruction\s+No\.?\s*[0-9A-Za-z./-]+)", re.I),
         "order": re.compile(r"\b(Order\s+No\.?\s*[0-9A-Za-z./-]+)", re.I),
     }
-    _date_pattern = r"([0-3]?\d[-/.][01]?\d[-/.](?:19|20)\d{2}|[0-3]?\d\s+[A-Za-z]+\s+(?:19|20)\d{2})"
+    _date_pattern = (
+        r"([0-3]?\d[-/.][01]?\d[-/.](?:19|20)\d{2}|"
+        r"[0-3]?\d(?:st|nd|rd|th)?\s+[A-Za-z]+,?\s+(?:19|20)\d{2})"
+    )
 
     def parse(self, document: NormalizedDocument) -> NormalizedDocument:
         text = "\n".join(page.text for page in document.pages)
         category = str(document.discovered_metadata.get("category", "")).casefold()
         document_type = self._document_type(text, category)
-        document_number = self._document_number(text, document_type) or self._metadata_number(document)
+        document_number = self._metadata_number(document) or self._document_number(text, document_type)
         publication = self._explicit_fact(
             text,
             rf"(?:dated|date of issue|notification date|publication date)\s*[:\-]?\s*{self._date_pattern}",
             document,
             "publication_date",
         )
+        portal_date = document.discovered_metadata.get("date")
+        if isinstance(portal_date, str):
+            try:
+                publication_date = datetime.fromisoformat(portal_date).date().isoformat()
+            except ValueError:
+                pass
+            else:
+                publication = LegalFact(
+                    value=publication_date,
+                    status="explicit",
+                    provenance=[Provenance(
+                        source_url=str(document.discovered_metadata.get("listing_url") or document.canonical_url),
+                        method="portal_metadata", captured_at=document.fetched_at,
+                        field="publication_date", confidence=1.0,
+                    )],
+                )
         effective = self._explicit_fact(
             text,
-            rf"(?:come|comes|shall come) into force (?:with effect from|on)?\s*{self._date_pattern}",
+            rf"(?:come|comes|shall come) into force (?:with effect from|from|on)?\s*{self._date_pattern}",
             document,
             "effective_date",
         )

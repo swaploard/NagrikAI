@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any, Protocol, cast
 from urllib.parse import urlparse, urlunparse
@@ -61,6 +61,10 @@ class SiteSpider(CrawlSpider):
         for url in self.start_urls:
             if self._is_allowed_url(url):
                 yield self._request(url, dont_filter=True)
+
+    async def start(self) -> AsyncIterator[scrapy.Request]:
+        for request in self.start_requests():
+            yield request
 
     def prepare_request(self, request: scrapy.Request, _response: Response) -> scrapy.Request | None:
         if not self._is_allowed_url(request.url):

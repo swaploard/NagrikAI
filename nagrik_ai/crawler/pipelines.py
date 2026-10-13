@@ -114,25 +114,39 @@ class DocumentSavePipeline:
                 title=str(item.get("title", "")),
             )
             item["status"] = "success" if created else "unchanged"
+            document_id = item.get("document_id")
+            if isinstance(document_id, str) and document_id:
+                manifest.resolve_document_identity(
+                    source_id=version.source_id,
+                    document_id=document_id,
+                    method="portal_download_record",
+                    evidence={"download_url": url, "listing_url": item.get("listing_url", "")},
+                    confidence=1.0,
+                )
             try:
                 normalized, normalized_path = normalize_source(
                     manifest,
                     version,
                     body,
                     language=str(item.get("language", "en")),
+                    discovered_metadata=cast(
+                        dict[str, str | int | float | bool | None], item.get("discovered_metadata", {})
+                    ),
                 )
                 if created:
                     mark_previous_normalized_version_historical(manifest, version)
                 item["normalized_path"] = normalized_path.relative_to(manifest.site_root).as_posix()
                 item["normalized_document"] = normalized.model_dump(mode="json")
-                if normalized.source_format == "unsupported":
+                if normalized.extraction.quality_status in {
+                    "unsupported", "failed", "incomplete", "ocr_required", "low_text"
+                }:
                     item["status"] = "incomplete"
                     raw_http_status = item.get("http_status")
                     manifest.record_outcome(
                         url=url,
                         status="incomplete",
                         http_status=raw_http_status if isinstance(raw_http_status, int) else None,
-                        error="Unsupported content type or byte signature",
+                        error=f"Extraction incomplete: {normalized.extraction.quality_status}",
                     )
             except Exception as exc:
                 logger.exception("Could not normalize %s", url)

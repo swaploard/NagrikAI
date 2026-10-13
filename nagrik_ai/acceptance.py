@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
@@ -14,6 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from nagrik_ai.crawler.crawl_manifest import CrawlManifest
 from nagrik_ai.crawler.url_utils import content_hash_for_bytes
 from nagrik_ai.models.document import NormalizedDocument
+from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
+from nagrik_ai.utils.markdown_utils import read_markdown_file
 from nagrik_ai.vectorstore.bm25_retriever import BM25Retriever
 from nagrik_ai.vectorstore.index_snapshot import VectorIndexSnapshot
 from nagrik_ai.vectorstore.legal_chunker import LegalChunker
@@ -137,6 +140,8 @@ def build_acceptance_report(
     review_ledger_path: Path | None = None,
     index_db_path: Path | None = None,
     vector_snapshot_path: Path | None = None,
+    require_rollout_evidence: bool = False,
+    retrieval_service: DocumentRetrievalService | None = None,
 ) -> AcceptanceReport:
     """Audit a bounded crawl without mutating its source or parsed artifacts."""
     root = site_root.resolve()
@@ -150,7 +155,14 @@ def build_acceptance_report(
     _audit_raw_artifacts(manifest, errors)
     documents, record_paths = _load_normalized_documents(root, errors)
     parsed_hashes = _parsed_artifact_hashes(root, documents, errors)
-    chunks = [chunk for document in documents for chunk in LegalChunker().chunk_document(document)]
+    chunks: list[Document] = []
+    for document in documents:
+        matches = sorted((root / "parsed" / "documents").glob(f"*/{document.version_id}.md"))
+        if matches:
+            metadata, content = read_markdown_file(str(matches[0]))
+            chunks.extend(LegalChunker().chunk_markdown(content, metadata))
+        else:
+            chunks.extend(LegalChunker().chunk_document(document))
     _audit_chunks(chunks, errors)
 
     migration_counts = Counter(migration.state for migration in manifest.state.migrations.values())
@@ -170,7 +182,7 @@ def build_acceptance_report(
     if samples and any(sample.review_status != "approved" for sample in samples):
         errors.append("manual source comparison is incomplete or rejected for one or more review samples")
 
-    probes = _retrieval_probes(documents, chunks)
+    probes = _retrieval_probes(documents, chunks, retrieval_service)
     if documents and not probes:
         warnings.append("controlled corpus has no supported identifiers for deterministic retrieval probes")
     if any(not probe.passed for probe in probes):
@@ -181,6 +193,26 @@ def build_acceptance_report(
         errors.append("crawl contains incomplete responses")
     if not documents:
         errors.append("no normalized documents were available for acceptance review")
+    if require_rollout_evidence:
+        run_path = root / "manifests" / "last_crawl_run.json"
+        if not run_path.is_file():
+            errors.append("recorded bounded crawl settings are missing")
+        else:
+            try:
+                run = json.loads(run_path.read_text(encoding="utf-8"))
+                for field in ("page_cap", "document_cap", "depth"):
+                    if run.get(field) != getattr(limits, field):
+                        errors.append(f"audit {field} does not match recorded crawl settings")
+            except (ValueError, OSError) as exc:
+                errors.append(f"invalid crawl run provenance: {exc}")
+        if vector_snapshot_path is None or index_db_path is None:
+            errors.append("rollout requires both the vector snapshot and transactional index database")
+        if retrieval_service is None:
+            errors.append("rollout requires retrieval probes against the persisted hybrid index")
+        if not any(document.tables for document in documents):
+            errors.append("rollout corpus has no structured rate table to review")
+        if len(parsed_hashes) != len(documents):
+            errors.append("not every normalized document has a parsed artifact")
 
     snapshot = _snapshot(manifest, documents, parsed_hashes, chunks, index_audit, vector_index_audit)
     return AcceptanceReport(
@@ -338,7 +370,11 @@ def _select_review_samples(
     return samples
 
 
-def _retrieval_probes(documents: list[NormalizedDocument], chunks: list[Document]) -> list[RetrievalProbe]:
+def _retrieval_probes(
+    documents: list[NormalizedDocument],
+    chunks: list[Document],
+    retrieval_service: DocumentRetrievalService | None = None,
+) -> list[RetrievalProbe]:
     if not chunks:
         return []
     retriever = BM25Retriever(_StaticDocumentSource(chunks))
@@ -351,6 +387,14 @@ def _retrieval_probes(documents: list[NormalizedDocument], chunks: list[Document
                 identifiers[("historical", metadata.document_number, "historical_source")].add(document.document_id)
         for code in metadata.hsn_sac_codes:
             identifiers[("hsn_sac", code, "all_versions")].add(document.document_id)
+        table_codes: set[str] = set()
+        for table in document.tables:
+            for row in table.rows:
+                for key, value in row.cells.items():
+                    if any(term in key.casefold() for term in ("chapter", "heading", "hsn", "sac")):
+                        table_codes.update(re.findall(r"\b\d{4}(?:\s\d{2}){0,2}\b", value))
+        for code in sorted(table_codes)[:5]:
+            identifiers[("hsn_sac", code, "all_versions")].add(document.document_id)
         for amendment_id in metadata.amendment_document_ids:
             identifiers[("amendment", amendment_id, "all_versions")].add(document.document_id)
         if metadata.applicability.status == "applicable" and metadata.document_number:
@@ -358,7 +402,11 @@ def _retrieval_probes(documents: list[NormalizedDocument], chunks: list[Document
 
     probes: list[RetrievalProbe] = []
     for (kind, query, scope), expected in sorted(identifiers.items())[:50]:
-        result = retriever.retrieve(query, k=1, scope=scope)
+        result = (
+            retrieval_service.retrieve(query, scope=scope)
+            if retrieval_service is not None
+            else retriever.retrieve(query, k=1, scope=scope)
+        )
         top = result[0] if result else None
         metadata = top.get("metadata", {}) if top else {}
         returned = str(metadata.get("document_id", "")) or None

@@ -21,8 +21,10 @@ from lxml import html
 from nagrik_ai.config.config_models import SiteConfig
 from nagrik_ai.crawler.crawl_manifest import CrawlManifest, ManifestRecord
 from nagrik_ai.models.document import NormalizedDocument
+from nagrik_ai.parser.document_pipeline import NORMALIZER_VERSION, normalize_source
 from nagrik_ai.parser.gst_document_parser import GSTDocumentParser
 from nagrik_ai.parser.normalized_markdown import render_normalized_markdown
+from nagrik_ai.parser.pdf_parser import PDFParser
 
 MIN_NESTED_PATH_PARTS = 2
 
@@ -359,6 +361,7 @@ class Parser:
         return str(output_path)
 
     def parse_all(self) -> list[dict[str, Any]]:
+        self.manifest = CrawlManifest.for_crawled_dir(Path(self.input_dir), site=self.site)
         self.logger.info(
             "Parsing HTML files for site '%s' from directory '%s'",
             self.site,
@@ -394,7 +397,25 @@ class Parser:
         path = Path(record_file)
         try:
             document = NormalizedDocument.model_validate_json(path.read_text(encoding="utf-8"))
+            expected_extraction_version = (
+                PDFParser.parser_version if document.source_format == "pdf" else NORMALIZER_VERSION
+            )
+            if document.extraction.parser_version != expected_extraction_version:
+                version = self.manifest.state.versions[document.version_id]
+                refreshed, _ = normalize_source(
+                    self.manifest, version, self.manifest.resolve_path(version.local_path).read_bytes(),
+                    document_id=document.document_id, language=document.language,
+                    discovered_metadata=document.discovered_metadata, official_file_url=document.official_file_url,
+                )
+                document = refreshed.model_copy(update={
+                    "source_version_status": document.source_version_status,
+                    "provenance": document.provenance,
+                })
             parsed = GSTDocumentParser().parse(document)
+            CrawlManifest._atomic_write(
+                path,
+                (json.dumps(parsed.model_dump(mode="json"), indent=2, sort_keys=True) + "\n").encode(),
+            )
             storage_id = self.manifest._storage_segment(parsed.document_id)
             output = Path(self.output_dir) / "documents" / storage_id / f"{parsed.version_id}.md"
             output.parent.mkdir(parents=True, exist_ok=True)

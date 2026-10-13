@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 from collections.abc import Iterator, Mapping
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 from urllib.parse import urlencode, urljoin
 
 import scrapy
@@ -98,6 +100,8 @@ class CbicTaxInfoSpider(SiteSpider):
             }
             if subtype:
                 query["category"] = subtype
+            if discovery.search_keyword:
+                query["searchKeyword"] = discovery.search_keyword
         url = urljoin(str(self.site_config.base_url), path)
         if query:
             url = f"{url}?{urlencode(query)}"
@@ -135,7 +139,15 @@ class CbicTaxInfoSpider(SiteSpider):
                 break
             if not self._is_required_tax(record):
                 continue
-            yield from self._record_candidates(category, record, response.url)
+            for candidate in self._record_candidates(category, record, response.url):
+                yield candidate
+                download_url = candidate.get("download_url")
+                if self.site_config.parser.download_pdfs and isinstance(download_url, str):
+                    yield self._request(
+                        download_url,
+                        callback=self.parse_download,
+                        cb_kwargs={"candidate": candidate},
+                    )
 
         discovery = self.site_config.discovery
         route = discovery.api_routes.get(category)
@@ -159,6 +171,43 @@ class CbicTaxInfoSpider(SiteSpider):
                 if isinstance(value, list):
                     return [record for record in value if isinstance(record, Mapping)]
         return None
+
+    def parse_download(
+        self, response: Response, candidate: dict[str, object]
+    ) -> Iterator[dict[str, object]]:
+        if response.status >= 400:
+            yield self._outcome(response, "blocked" if response.status in {403, 429} else "failed")
+            return
+        try:
+            if response.body.startswith(b"%PDF-"):
+                content = response.body
+            else:
+                payload = json.loads(response.body)
+                encoded = payload.get("data") if isinstance(payload, dict) else None
+                if not isinstance(encoded, str):
+                    raise ValueError("Download response has no base64 data")
+                content = base64.b64decode(encoded, validate=True)
+            if not content.startswith(b"%PDF-"):
+                raise ValueError("Download content has no PDF signature")
+        except (ValueError, TypeError, binascii.Error) as exc:
+            yield self._outcome(response, "incomplete", str(exc))
+            return
+        yield {
+            "url": response.url,
+            "body": content,
+            "content_type": "application/pdf",
+            "status": "success",
+            "title": candidate.get("title", ""),
+            "language": candidate.get("language", "en"),
+            "document_id": candidate["document_id"],
+            "discovered_metadata": {
+                **cast(dict[str, object], candidate.get("metadata", {})),
+                "category": candidate.get("category", ""),
+                "tax_type": candidate.get("tax_type", "GST"),
+                "listing_url": candidate.get("listing_url", ""),
+            },
+            "listing_url": candidate["listing_url"],
+        }
 
     def _is_required_tax(self, record: Mapping[str, Any]) -> bool:
         expected_type = self.site_config.discovery.tax_type
@@ -185,12 +234,20 @@ class CbicTaxInfoSpider(SiteSpider):
         portal_id = record.get("id")
         if portal_id is None:
             return
+        required_numbers = self.site_config.discovery.document_numbers
+        number = str(record.get(self._number_fields.get(category, ""), ""))
+        if required_numbers and number.casefold().lstrip("0") not in {
+            value.casefold().lstrip("0") for value in required_numbers
+        }:
+            return
         title = self._first_text(record, self._title_fields.get(category, ("name",)))
         variants = self._language_variants(record)
         if not variants:
             variants = [(self.site_config.discovery.languages[0], "ENG")]
 
         for language, portal_language in variants:
+            if language not in self.site_config.discovery.languages:
+                continue
             record_key = f"{category}:{portal_id}:{language}"
             if record_key in self._seen_record_keys:
                 continue

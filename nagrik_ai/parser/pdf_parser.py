@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -24,7 +25,7 @@ class PDFExtractionResult:
 
 class PDFParser:
     parser_name = "PyMuPDF"
-    parser_version = "1.0"
+    parser_version = "1.1"
 
     def __init__(self, usefulness_threshold: int = 80, ocr: OCRCallback | None = None) -> None:
         self.usefulness_threshold = usefulness_threshold
@@ -40,10 +41,11 @@ class PDFParser:
             return PDFExtractionResult(quality_status="failed", errors=[str(exc)])
 
         try:
+            table_context: dict[str, Any] = {}
             for page_index, page in enumerate(cast(Any, document)):
                 page_number = page_index + 1
                 text = str(page.get_text("text", sort=True)).strip()
-                page_tables = self._extract_tables(page, page_number, errors)
+                page_tables = self._extract_tables(page, page_number, errors, table_context)
                 tables.extend(page_tables)
                 pages.append(
                     PagePayload(
@@ -86,7 +88,10 @@ class PDFParser:
         )
 
     @staticmethod
-    def _extract_tables(page: Any, page_number: int, errors: list[str]) -> list[TablePayload]:
+    def _extract_tables(
+        page: Any, page_number: int, errors: list[str], context: dict[str, Any] | None = None
+    ) -> list[TablePayload]:
+        context = context if context is not None else {}
         try:
             finder = page.find_tables()
         except Exception as exc:
@@ -98,14 +103,43 @@ class PDFParser:
             matrix = table.extract()
             if not matrix:
                 continue
-            headers = [str(value or "").strip() or f"column_{index + 1}" for index, value in enumerate(matrix[0])]
+            first_row = [str(value or "").strip() for value in matrix[0]]
+            is_header = not re.fullmatch(r"\(?\d+\)?\.?", first_row[0]) and any(
+                re.search(r"description|chapter|heading|s\.?\s*no|hsn|sac|rate", value, re.I)
+                for value in first_row
+            )
+            if is_header:
+                headers = [value or f"column_{index + 1}" for index, value in enumerate(first_row)]
+                context["headers"] = headers
+                data_rows = matrix[1:]
+            else:
+                prior_headers = context.get("headers", [])
+                headers = prior_headers if len(prior_headers) == len(first_row) else [
+                    f"column_{index + 1}" for index in range(len(first_row))
+                ]
+                data_rows = matrix
+            preceding = str(page.get_text("text", clip=(0, 0, page.rect.width, table.bbox[1]), sort=True))
+            if re.search(r"Central\s+Tax", preceding, re.I):
+                context["rate_field"] = "Central tax rate"
+            schedules = re.findall(r"Schedule\s+[IVX]+\s*[-\u2013\u2014]\s*\d+(?:\.\d+)?\s*%", preceding, re.I)
+            if schedules:
+                context["schedule"] = schedules[-1].strip()
+            schedule = context.get("schedule")
+            rate_match = re.search(r"(\d+(?:\.\d+)?\s*%)", schedule or "")
             rows: list[TableRow] = []
-            for row_index, values in enumerate(matrix[1:]):
+            for row_index, values in enumerate(data_rows):
+                if all(re.fullmatch(r"\(?\d+\)?", str(value or "").strip()) for value in values):
+                    continue
                 cells = {
                     header: str(values[index] or "").strip() if index < len(values) else ""
                     for index, header in enumerate(headers)
                 }
-                rows.append(TableRow(row_index=row_index, cells=cells, page_number=page_number))
+                if rate_match:
+                    cells[str(context.get("rate_field", "Schedule rate"))] = rate_match.group(1)
+                rows.append(TableRow(
+                    row_index=row_index, cells=cells, page_number=page_number,
+                    schedule=schedule, heading=schedule,
+                ))
             identity = f"{page_number}:{table_index}:{headers}:{matrix}".encode()
             table_id = hashlib.sha256(identity).hexdigest()
             result.append(

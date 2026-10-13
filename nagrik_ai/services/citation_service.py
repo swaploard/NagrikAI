@@ -31,6 +31,7 @@ def flatten_doc(doc: dict[str, Any]) -> dict[str, Any]:
         "total_chunks": metadata.get("total_chunks", 1),
         "score": doc.get("score", 0.0),
         "citation_id": doc.get("citation_id", 1),
+        "page": metadata.get("page", 0),
     }
 
 
@@ -46,6 +47,7 @@ def _make_source_info(doc: dict[str, Any], citation_id: int) -> SourceInfo:
         total_chunks=int(doc.get("total_chunks", 1)),
         score=float(doc.get("score", 0.0)),
         snippet="",
+        page=int(doc["page"]) if doc.get("page") else None,
     )
 
 
@@ -85,12 +87,13 @@ def citation_sort_key(doc: dict[str, Any]) -> tuple[int, float, str, str]:
 
 def format_context_block(doc: dict[str, object], index: int) -> str:
     """Format a single document as a structured context block with hard separator."""
+    page_line = f"Page: {doc['page']}\n" if doc.get("page") else ""
     return (
         f"[{index}]\n"
         f"Source ID: {doc.get('source_id', '')}\n"
         f"Title: {doc.get('title', '')}\n"
         f"URL: {doc.get('url', '')}\n"
-        f"Domain: {doc.get('domain', '')}\n\n"
+        f"Domain: {doc.get('domain', '')}\n{page_line}\n"
         f"Content:\n{doc.get('page_content', doc.get('content', ''))}"
     )
 
@@ -130,7 +133,8 @@ def format_merged_context_block(docs: list[dict[str, Any]], index: int) -> str:
     for chunk in chunks_by_index:
         chunk_index = int(chunk.get("chunk_index", 0))
         content: str = str(chunk.get("page_content", chunk.get("content", "")))
-        lines.append(f"Chunk {chunk_index}:\n{content}")
+        page_line = f"Page: {chunk['page']}\n" if chunk.get("page") else ""
+        lines.append(f"Chunk {chunk_index}:\n{page_line}{content}")
     return "\n".join(lines)
 
 

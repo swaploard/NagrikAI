@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from scrapy.crawler import CrawlerProcess
 
 from nagrik_ai.config.config_models import SiteConfig
+from nagrik_ai.crawler.crawl_manifest import CrawlManifest
 from nagrik_ai.crawler.spiders.cbic_taxinfo_spider import CbicTaxInfoSpider
 from nagrik_ai.crawler.spiders.site_spider import SiteSpider
 
@@ -92,9 +95,11 @@ def run_batch_scrapy_crawl(
 ) -> int:
     if not jobs:
         return 0
+    logging.getLogger("scrapy.core.scraper").setLevel(logging.INFO)
 
     settings = {
         "BOT_NAME": "nagrik_ai",
+        "TELNETCONSOLE_ENABLED": False,
         "ROBOTSTXT_OBEY": True,
         "LOG_LEVEL": "INFO",
         "LOG_FORMATTER": "scrapy.logformatter.LogFormatter",
@@ -116,6 +121,18 @@ def run_batch_scrapy_crawl(
 
     for site_config, output_dir, manage in jobs:
         output_dir.mkdir(parents=True, exist_ok=True)
+        run_record = {
+            "started_at": datetime.now(UTC).isoformat(),
+            "site": site_config.name,
+            "page_cap": page_limit,
+            "document_cap": document_limit,
+            "depth": site_config.crawler.max_depth if max_depth is None else max_depth,
+            "site_config": site_config.model_dump(mode="json"),
+        }
+        CrawlManifest._atomic_write(
+            output_dir.parent / "manifests" / "last_crawl_run.json",
+            (json.dumps(run_record, sort_keys=True, indent=2) + "\n").encode(),
+        )
         spider_class = site_spider_class(
             site_config,
             max_depth=max_depth,

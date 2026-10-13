@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from pypdf import PdfReader
 
@@ -23,7 +24,7 @@ def read_pdf(file_path: str) -> ToolResult:
     if path.stat().st_size > MAX_FILE_BYTES:
         return failure("PDF exceeds the 25 MB size limit.")
     reader = PdfReader(path)
-    metadata = reader.metadata or {}
+    metadata: dict[str, Any] = dict(reader.metadata or {})
     # Explicit document metadata only; titles and file names cannot establish authority.
     declared = metadata.get("/SourceAuthority", metadata.get("/source_authority", "secondary"))
     if declared not in {"authoritative", "secondary", "general_web"}:

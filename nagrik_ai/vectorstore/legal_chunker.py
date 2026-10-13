@@ -14,7 +14,7 @@ RetrievalScope = Literal["current_source", "historical_source", "legally_applica
 
 class LegalChunker:
     name = "LegalChunker"
-    version = "1.0"
+    version = "1.2"
     _boundaries: ClassVar[dict[str, re.Pattern[str]]] = {
         "act": re.compile(r"(?im)^(?=\s*(?:section\s+)?\d+[A-Z]?\s*[.:-])"),
         "rule": re.compile(r"(?im)^(?=\s*rule\s+\d+[A-Z]?\b)"),
@@ -65,6 +65,7 @@ class LegalChunker:
             if not page.strip():
                 continue
             page_match = page_marker.search(page)
+            is_preamble = has_explicit_pages and page_match is None
             page_number = int(page_match.group(1)) if page_match else page_index + 1
             location_prefix = (
                 f"page:{page_number}" if page_match or not has_explicit_pages else "preamble"
@@ -78,6 +79,7 @@ class LegalChunker:
                         "chunk_id": chunk_id,
                         "logical_location": location,
                         "page": page_number,
+                        "is_preamble": is_preamble,
                         "chunker_name": self.name,
                         "chunker_version": self.version,
                         "source_version_status": source_status,
@@ -109,6 +111,7 @@ class LegalChunker:
                         "retrieval_scopes": sorted(scopes),
                         "citation_url": metadata.get("source_url", ""),
                         "source_type": "schedule",
+                        "rate_row": row,
                     }
                 )
                 chunks.append(Document(page_content=f"{inherited}\n{cells}".strip(), metadata=chunk_metadata))
@@ -142,6 +145,7 @@ class LegalChunker:
             "source_url": document.canonical_url,
             "source_type": source_type,
             "source_format": document.source_format,
+            "legal_metadata": document.legal_metadata.model_dump(mode="json"),
             "logical_location": location,
             "schema_version": document.schema_version,
             "parser_name": document.extraction.parser_name,

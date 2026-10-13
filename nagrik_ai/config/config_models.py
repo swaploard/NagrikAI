@@ -81,6 +81,8 @@ class DiscoveryOptions(BaseModel):
     tax_id: int | None = None
     languages: list[str] = Field(default_factory=lambda: ["en"])
     years: list[int] = Field(default_factory=list)
+    search_keyword: str | None = None
+    document_numbers: list[str] = Field(default_factory=list)
     max_pages: int = Field(default=1, ge=1)
     max_documents: int = Field(default=50, ge=1)
     page_size: int = Field(default=20, ge=1, le=100)

@@ -167,6 +167,7 @@ def build_context_node(
                     url=str(first_flat.get("url", "")),
                     domain=str(first_flat.get("domain", "")),
                     source_id=group_key[0],
+                    page=int(first_flat["page"]) if first_flat.get("page") else None,
                     citation_id=i,
                     chunk_index=int(first_flat.get("chunk_index", 0)),
                     total_chunks=int(first_flat.get("total_chunks", 1)),

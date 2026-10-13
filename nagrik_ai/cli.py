@@ -176,7 +176,18 @@ def vectorize(
         return
     chroma_store = create_chroma_store(persist_dir)
     text_splitter = HybridMarkdownSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-    vectorizer = MarkdownVectorizer(chroma_store, text_splitter=text_splitter)
+    from nagrik_ai.config.config_models import EMBEDDING_MODEL
+    from nagrik_ai.vectorstore.index_outbox import IndexOutbox
+
+    outbox = IndexOutbox(persist_dir / "index_state.sqlite")
+    vectorizer = MarkdownVectorizer(
+        chroma_store,
+        text_splitter=text_splitter,
+        embedding_provider="huggingface",
+        embedding_model=EMBEDDING_MODEL,
+        embedding_model_version=EMBEDDING_MODEL,
+        index_outbox=outbox,
+    )
     for site_dir in sorted(content_dir.iterdir()):
         if not site_dir.is_dir():
             continue
@@ -186,6 +197,10 @@ def vectorize(
         typer.echo(f"Vectorizing {site_dir.name}...")
         count = vectorizer.process_directory(str(parsed))
         typer.echo(f"  Added {count} files")
+    vectorizer.index_reconciler().reconcile()
+    if outbox.pending():
+        typer.echo("Index updates remain pending; inspect the outbox and rerun vectorize.", err=True)
+        raise typer.Exit(1)
     from nagrik_ai.vectorstore.index_snapshot import capture_index_snapshot, write_index_snapshot
 
     snapshot_path = persist_dir / "acceptance_index_snapshot.json"
@@ -204,10 +219,28 @@ def acceptance_audit(
     review_ledger: Annotated[Path | None, typer.Option("--review-ledger")] = None,
     index_db: Annotated[Path | None, typer.Option("--index-db")] = None,
     vector_snapshot: Annotated[Path | None, typer.Option("--vector-snapshot")] = None,
+    persist_dir: Annotated[
+        Path | None, typer.Option("--persist-dir", help="Run probes against this hybrid index")
+    ] = None,
     output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
     gate: Annotated[bool, typer.Option("--gate", help="Exit unsuccessfully unless every rollout gate passes")] = False,
 ) -> None:
     from nagrik_ai.acceptance import CrawlLimits, build_acceptance_report, write_acceptance_report
+
+    retrieval_service = None
+    if persist_dir is not None:
+        from nagrik_ai.services.document_retrieval_service import DocumentRetrievalService
+        from nagrik_ai.services.tracing import LangSmithTracer
+        from nagrik_ai.vectorstore.bm25_retriever import BM25Retriever
+
+        store = create_chroma_store(persist_dir)
+        retrieval_service = DocumentRetrievalService(
+            store,
+            top_k=5,
+            hybrid_search=True,
+            bm25_retriever=BM25Retriever(store),
+            tracer=LangSmithTracer(enabled=False),
+        )
 
     report_path = output or site_root / "reports" / "acceptance.json"
     report = build_acceptance_report(
@@ -217,6 +250,8 @@ def acceptance_audit(
         review_ledger_path=review_ledger,
         index_db_path=index_db,
         vector_snapshot_path=vector_snapshot,
+        require_rollout_evidence=gate,
+        retrieval_service=retrieval_service,
     )
     write_acceptance_report(report, report_path)
     typer.echo(f"Acceptance report: {report_path}")

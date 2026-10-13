@@ -18,6 +18,7 @@ class SourceInfo:
     total_chunks: int
     score: float = 0.0
     snippet: str = ""  # preview text for UI
+    page: int | None = None
 
 
 @dataclass

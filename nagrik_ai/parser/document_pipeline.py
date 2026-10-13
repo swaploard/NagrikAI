@@ -19,10 +19,11 @@ from nagrik_ai.models.document import (
     Provenance,
     SourceFormat,
 )
+from nagrik_ai.parser.gst_table_parser import GSTTableParser
 from nagrik_ai.parser.pdf_parser import PDFParser
 
 NORMALIZER_NAME = "NagrikDocumentPipeline"
-NORMALIZER_VERSION = "1.0"
+NORMALIZER_VERSION = "1.1"
 
 
 def classify_source(content_type: str, content: bytes) -> tuple[SourceFormat, str]:
@@ -105,6 +106,7 @@ def normalize_source(
         if extracted_file_url:
             extracted_file_url = urljoin(version.observed_source_url, extracted_file_url)
         pages = [PagePayload(page_number=1, text=text)]
+        tables = GSTTableParser().parse_html(decoded)
         extraction = ExtractionInfo(
             method="viewer_link" if extracted_file_url else "html",
             parser_name=NORMALIZER_NAME,

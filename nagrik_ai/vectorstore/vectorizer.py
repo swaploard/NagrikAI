@@ -1,5 +1,7 @@
 """Vectorize markdown content into ChromaDB using LangChain components."""
 
+import hashlib
+import json
 import logging
 from pathlib import Path
 from typing import Any, Protocol
@@ -8,6 +10,8 @@ from langchain_core.documents import Document
 
 from nagrik_ai.utils.markdown_utils import find_markdown_files, read_markdown_file
 from nagrik_ai.vectorstore.chroma_store import ChromaStore, validate_metadata
+from nagrik_ai.vectorstore.index_outbox import IndexFingerprint, IndexOperation, IndexOutbox
+from nagrik_ai.vectorstore.index_reconciler import IndexReconciler, RetrievalIndexBackend
 from nagrik_ai.vectorstore.legal_chunker import LegalChunker
 
 
@@ -34,6 +38,7 @@ class MarkdownVectorizer:
         embedding_provider: str = "unknown",
         embedding_model: str = "unknown",
         embedding_model_version: str = "unknown",
+        index_outbox: IndexOutbox | None = None,
     ) -> None:
         self.chroma_store = chroma_store
         self.text_splitter = text_splitter
@@ -41,6 +46,9 @@ class MarkdownVectorizer:
         self.embedding_provider = embedding_provider
         self.embedding_model = embedding_model
         self.embedding_model_version = embedding_model_version
+        self.index_outbox = index_outbox
+        if index_outbox is not None:
+            self.chroma_store.index_db_path = index_outbox.path
 
         logger.debug("Initialized MarkdownVectorizer")
 
@@ -106,8 +114,7 @@ class MarkdownVectorizer:
                 logger.exception("Error processing file %s", file_path)
 
         if all_documents:
-            ids = [str(document.metadata.get("chunk_id", "")) for document in all_documents]
-            self.chroma_store.add_documents(all_documents, ids=ids if all(ids) else None)
+            self._store_chunks(all_documents)
 
         return len(all_documents)
 
@@ -127,7 +134,8 @@ class MarkdownVectorizer:
         normalized_metadata = self._normalize_metadata(metadata)
         enriched_metadata = normalized_metadata.copy()
 
-        enriched_metadata["source_id"] = doc_id
+        enriched_metadata.setdefault("source_id", doc_id)
+        enriched_metadata.setdefault("content_hash", hashlib.sha256(Path(file_path).read_bytes()).hexdigest())
         enriched_metadata["source_path"] = file_path
         enriched_metadata["file_name"] = Path(file_path).name
 
@@ -142,7 +150,7 @@ class MarkdownVectorizer:
         elif "url" in enriched_metadata:
             enriched_metadata["citation_url"] = enriched_metadata["url"]
 
-        return validate_metadata(enriched_metadata)
+        return enriched_metadata
 
     def process_file(self, file_path: str) -> int:
         try:
@@ -161,8 +169,7 @@ class MarkdownVectorizer:
 
             self._finalize_chunks(chunks, file_path)
 
-            ids = [str(chunk.metadata.get("chunk_id", "")) for chunk in chunks]
-            self.chroma_store.add_documents(chunks, ids=ids if all(ids) else None)
+            self._store_chunks(chunks)
 
             logger.debug(
                 "Added document %s with embeddings",
@@ -180,6 +187,57 @@ class MarkdownVectorizer:
         if metadata.get("document_id") and metadata.get("version_id"):
             return self.legal_chunker.chunk_markdown(content, metadata)
         return self.text_splitter.split_documents([document])
+
+    def _store_chunks(self, chunks: list[Document]) -> None:
+        outbox = self.index_outbox
+        if outbox is None:
+            self.chroma_store.add_documents(chunks, ids=[str(chunk.metadata["chunk_id"]) for chunk in chunks])
+            return
+        groups: dict[tuple[str, str], list[Document]] = {}
+        for chunk in chunks:
+            metadata = chunk.metadata
+            document_id = str(metadata.get("document_id") or metadata["source_id"])
+            version_id = str(metadata.get("version_id") or metadata.get("content_hash") or "legacy")
+            groups.setdefault((document_id, version_id), []).append(chunk)
+        for (document_id, version_id), group in groups.items():
+            metadata = group[0].metadata
+            raw_scopes = metadata.get("retrieval_scopes", '["all_versions", "current_source"]')
+            scopes = json.loads(raw_scopes) if isinstance(raw_scopes, str) else raw_scopes
+            fingerprint = IndexFingerprint(
+                content_hash=str(metadata.get("content_hash") or ""),
+                schema_version=str(metadata.get("schema_version") or "legacy"),
+                parser_name=str(metadata.get("parser_name") or "Parser"),
+                parser_version=str(metadata.get("parser_version") or "legacy"),
+                extraction_parser_name=str(metadata.get("extraction_parser_name") or ""),
+                extraction_parser_version=str(metadata.get("extraction_parser_version") or ""),
+                chunker_name=self.legal_chunker.name,
+                chunker_version=self.legal_chunker.version,
+                embedding_provider=self.embedding_provider,
+                embedding_model=self.embedding_model,
+                embedding_model_version=self.embedding_model_version,
+            )
+            outbox.plan(
+                document_id=document_id,
+                target_version_id=version_id,
+                desired_scopes=scopes,
+                expected_chunk_ids=[str(chunk.metadata["chunk_id"]) for chunk in group],
+                fingerprint=fingerprint,
+                chunk_payloads=[{"page_content": chunk.page_content, "metadata": chunk.metadata} for chunk in group],
+            )
+        reconciler = self.index_reconciler()
+        reconciler.process_pending()
+        if outbox.pending():
+            raise RuntimeError("Index operations remain pending; rerun vectorize to replay them")
+
+    def index_reconciler(self) -> IndexReconciler:
+        outbox = self.index_outbox
+        if outbox is None:
+            raise RuntimeError("Transactional indexing is not configured")
+
+        def provide(operation: IndexOperation) -> list[Document]:
+            return [Document.model_validate(payload) for payload in outbox.chunk_payloads(operation.operation_id)]
+
+        return IndexReconciler(outbox, RetrievalIndexBackend(self.chroma_store, provide))
 
     def _add_lineage(self, metadata: dict[str, Any]) -> None:
         metadata["embedding_provider"] = self.embedding_provider

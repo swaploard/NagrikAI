@@ -65,6 +65,7 @@ def _flatten_doc(doc: dict[str, Any]) -> dict[str, Any]:
         "total_chunks": metadata.get("total_chunks", 1),
         "score": doc.get("score", 0.0),
         "citation_id": doc.get("citation_id", 1),
+        "page": metadata.get("page", 0),
     }
     return flat
 

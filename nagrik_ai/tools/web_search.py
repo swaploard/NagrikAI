@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 import requests
 
@@ -30,7 +31,7 @@ def web_search(query: str) -> ToolResult:
     )
     response.raise_for_status()
     payload = response.json()
-    sources = []
+    sources: list[dict[str, Any]] = []
     for item in payload.get("results", [])[:5]:
         if not item.get("url") or not item.get("content"):
             continue
