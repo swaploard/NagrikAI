@@ -50,7 +50,11 @@ class MarkdownVectorizer:
         site_filter: str | None = None,
         batch_size: int = 20,
     ) -> int:
-        markdown_files = find_markdown_files(input_dir, site_filter)
+        markdown_files = [
+            path
+            for path in find_markdown_files(input_dir, site_filter)
+            if Path(path).name != "index.md"
+        ]
         total_files = len(markdown_files)
 
         logger.info("Found %d markdown files to process", total_files)
@@ -89,12 +93,7 @@ class MarkdownVectorizer:
 
                 chunks = self._split(doc, content)
 
-                for i, chunk in enumerate(chunks):
-                    md = self._normalize_metadata(getattr(chunk, "metadata", None))
-                    md["chunk_index"] = i
-                    md["total_chunks"] = len(chunks)
-                    self._add_lineage(md)
-                    chunk.metadata = validate_metadata(md)
+                self._finalize_chunks(chunks, file_path)
 
                 all_documents.extend(chunks)
 
@@ -160,12 +159,7 @@ class MarkdownVectorizer:
 
             chunks = self._split(doc, content)
 
-            for i, chunk in enumerate(chunks):
-                md = self._normalize_metadata(getattr(chunk, "metadata", None))
-                md["chunk_index"] = i
-                md["total_chunks"] = len(chunks)
-                self._add_lineage(md)
-                chunk.metadata = validate_metadata(md)
+            self._finalize_chunks(chunks, file_path)
 
             ids = [str(chunk.metadata.get("chunk_id", "")) for chunk in chunks]
             self.chroma_store.add_documents(chunks, ids=ids if all(ids) else None)
@@ -193,3 +187,27 @@ class MarkdownVectorizer:
         metadata["embedding_model_version"] = self.embedding_model_version
         metadata.setdefault("chunker_name", self.legal_chunker.name)
         metadata.setdefault("chunker_version", self.legal_chunker.version)
+
+    def _finalize_chunks(self, chunks: list[Document], file_path: str) -> None:
+        """Attach complete, stable identity and lineage to every chunk."""
+        for index, chunk in enumerate(chunks):
+            metadata = self._normalize_metadata(getattr(chunk, "metadata", None))
+            metadata["chunk_index"] = index
+            metadata["total_chunks"] = len(chunks)
+            location = str(metadata.get("logical_location") or f"chunk:{index}")
+            metadata["logical_location"] = location
+            if not metadata.get("chunk_id"):
+                document_id = str(
+                    metadata.get("document_id")
+                    or metadata.get("source_id")
+                    or metadata.get("source_path")
+                    or Path(file_path).resolve()
+                )
+                version_id = str(metadata.get("version_id") or metadata.get("content_hash") or "")
+                metadata["chunk_id"] = self.legal_chunker.chunk_id(
+                    document_id,
+                    version_id,
+                    location,
+                )
+            self._add_lineage(metadata)
+            chunk.metadata = validate_metadata(metadata)

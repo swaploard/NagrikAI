@@ -142,6 +142,7 @@ class NagrikAIConfig(BaseModel):
     chroma_persist_dir: str = _get_env("NAGRIKAI_CHROMA_PERSIST_DIR", "chroma_db")
     content_dir: str = _get_env("NAGRIKAI_CONTENT_DIR", "content")
     embedding_model: str = _get_env("NAGRIKAI_EMBEDDING_MODEL", "BAAI/bge-m3")
+    embedding_batch_size: int = _get_env_int("NAGRIKAI_EMBEDDING_BATCH_SIZE", 1)
     llm_provider: str = _get_env("NAGRIKAI_LLM_PROVIDER", "ollama")
     ollama_base_url: str = _get_env("NAGRIKAI_OLLAMA_BASE_URL", "http://localhost:11434")
     ollama_model: str = _get_env("NAGRIKAI_OLLAMA_MODEL", "qwen2.5:7b")
@@ -186,6 +187,7 @@ _defaults = NagrikAIConfig.model_construct(sites=[])
 CHROMA_PERSIST_DIR = Path(str(_defaults.chroma_persist_dir))
 CONTENT_DIR = Path(str(_defaults.content_dir))
 EMBEDDING_MODEL = _defaults.embedding_model
+EMBEDDING_BATCH_SIZE = _defaults.embedding_batch_size
 LLM_PROVIDER = _defaults.llm_provider
 OLLAMA_BASE_URL = _defaults.ollama_base_url
 OLLAMA_MODEL = _defaults.ollama_model

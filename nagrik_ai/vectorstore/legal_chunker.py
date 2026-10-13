@@ -57,15 +57,20 @@ class LegalChunker:
             scopes.add("legally_applicable")
         table_payloads = re.findall(r"<!-- structured-table:[^\n]+\n(.*?)\n-->", content, re.DOTALL)
         prose = re.sub(r"<!-- structured-table:[^\n]+\n.*?\n-->", "", content, flags=re.DOTALL)
+        page_marker = re.compile(r"<!-- page:(\d+) -->")
+        has_explicit_pages = page_marker.search(prose) is not None
         pages = re.split(r"(?=<!-- page:\d+ -->)", prose)
         chunks: list[Document] = []
         for page_index, page in enumerate(pages):
             if not page.strip():
                 continue
-            page_match = re.search(r"<!-- page:(\d+) -->", page)
+            page_match = page_marker.search(page)
             page_number = int(page_match.group(1)) if page_match else page_index + 1
+            location_prefix = (
+                f"page:{page_number}" if page_match or not has_explicit_pages else "preamble"
+            )
             for part_index, part in enumerate(self._split(page, source_type)):
-                location = f"page:{page_number}:part:{part_index}"
+                location = f"{location_prefix}:part:{part_index}"
                 chunk_id = self.chunk_id(document_id, version_id, location)
                 chunk_metadata = dict(enriched_metadata)
                 chunk_metadata.update(

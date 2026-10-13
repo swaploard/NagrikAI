@@ -25,6 +25,7 @@ from nagrik_ai.config.config_models import (
     BUSINESS_PROFILE_DB,
     CHECKPOINT_DIR,
     CHROMA_PERSIST_DIR,
+    EMBEDDING_BATCH_SIZE,
     EMBEDDING_MODEL,
     FETCH_K,
     HYBRID_SEARCH_ENABLED,
@@ -59,7 +60,11 @@ def create_chroma_store(persist_dir: str | Path | None = None) -> ChromaStore:
     if torch.cuda.is_available():
         model_kwargs["model_kwargs"] = {"torch_dtype": torch.float16}
         logger.info("CUDA available: embedding model will run in fp16")
-    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL, model_kwargs=model_kwargs)
+    embeddings = HuggingFaceEmbeddings(
+        model_name=EMBEDDING_MODEL,
+        model_kwargs=model_kwargs,
+        encode_kwargs={"batch_size": EMBEDDING_BATCH_SIZE, "normalize_embeddings": True},
+    )
     return ChromaStore(
         collection_name="nagrik_ai_docs",
         embeddings=embeddings,
